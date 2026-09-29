@@ -1,0 +1,72 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Chart tokens: validated categorical palette (dataviz reference instance), light + dark steps */
+:root {
+  --series-1: #2a78d6; --series-2: #eb6834; --series-3: #1baf7a; --series-4: #eda100;
+  --series-5: #e87ba4; --series-6: #008300; --series-7: #4a3aa7; --series-8: #e34948;
+  --chart-grid: #e1e0d9; --chart-axis: #c3c2b7; --chart-muted: #898781; --chart-ink: #52514e; --chart-surface: #ffffff;
+  --status-good: #0ca30c; --status-warning: #fab219; --status-serious: #ec835a; --status-critical: #d03b3b;
+}
+.dark {
+  --series-1: #3987e5; --series-2: #d95926; --series-3: #199e70; --series-4: #c98500;
+  --series-5: #d55181; --series-6: #008300; --series-7: #9085e9; --series-8: #e66767;
+  --chart-grid: #2c2f36; --chart-axis: #434d60; --chart-muted: #8593a9; --chart-ink: #c3c2b7; --chart-surface: #262b35;
+}
+
+@layer base {
+  html { -webkit-tap-highlight-color: transparent; }
+  body { font-feature-settings: "cv11", "ss01"; }
+  ::selection { @apply bg-brand-200 dark:bg-brand-800; }
+}
+
+@layer components {
+  .card { @apply rounded-xl border border-ink-200 bg-white shadow-card dark:border-ink-800 dark:bg-ink-900; }
+  .card-pad { @apply p-4 sm:p-5; }
+  .card-title { @apply text-sm font-semibold text-ink-700 dark:text-ink-200; }
+  .muted { @apply text-ink-500 dark:text-ink-400; }
+
+  .btn { @apply inline-flex items-center justify-center gap-2 rounded-lg px-3.5 py-2 text-sm font-medium transition
+    focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-1 disabled:cursor-not-allowed disabled:opacity-50
+    dark:focus-visible:ring-offset-ink-900; }
+  .btn-primary { @apply btn bg-brand-600 text-white hover:bg-brand-700 active:bg-brand-800; }
+  .btn-secondary { @apply btn border border-ink-200 bg-white text-ink-800 hover:bg-ink-50 dark:border-ink-700 dark:bg-ink-800 dark:text-ink-100 dark:hover:bg-ink-700; }
+  .btn-ghost { @apply btn text-ink-600 hover:bg-ink-100 dark:text-ink-300 dark:hover:bg-ink-800; }
+  .btn-success { @apply btn bg-emerald-600 text-white hover:bg-emerald-700; }
+  .btn-danger { @apply btn bg-rose-600 text-white hover:bg-rose-700; }
+  .btn-warn { @apply btn bg-amber-500 text-white hover:bg-amber-600; }
+  .btn-sm { @apply px-2.5 py-1.5 text-xs; }
+
+  .input { @apply w-full rounded-lg border border-ink-200 bg-white px-3 py-2 text-sm text-ink-900 placeholder:text-ink-400
+    focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/30 dark:border-ink-700 dark:bg-ink-900 dark:text-ink-100; }
+  .select { @apply input pr-8; }
+
+  .chip { @apply inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium ring-1 ring-inset; }
+  .chip-pos { @apply chip bg-emerald-50 text-emerald-700 ring-emerald-600/20 dark:bg-emerald-500/10 dark:text-emerald-300 dark:ring-emerald-400/20; }
+  .chip-neg { @apply chip bg-rose-50 text-rose-700 ring-rose-600/20 dark:bg-rose-500/10 dark:text-rose-300 dark:ring-rose-400/20; }
+  .chip-neu { @apply chip bg-ink-100 text-ink-700 ring-ink-500/20 dark:bg-ink-800 dark:text-ink-300 dark:ring-ink-600/30; }
+  .chip-brand { @apply chip bg-brand-50 text-brand-700 ring-brand-600/20 dark:bg-brand-500/10 dark:text-brand-300 dark:ring-brand-400/20; }
+  .chip-warn { @apply chip bg-amber-50 text-amber-800 ring-amber-600/20 dark:bg-amber-500/10 dark:text-amber-300 dark:ring-amber-400/20; }
+
+  .kbd { @apply rounded border border-ink-300 bg-ink-50 px-1.5 py-0.5 font-mono text-[10px] font-semibold text-ink-600 dark:border-ink-600 dark:bg-ink-800 dark:text-ink-300; }
+  .table-head { @apply bg-ink-50 text-left text-xs font-semibold uppercase tracking-wide text-ink-500 dark:bg-ink-800/60 dark:text-ink-400; }
+  .synthetic { @apply inline-flex items-center gap-1 rounded-md bg-amber-100 px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-amber-800 dark:bg-amber-500/15 dark:text-amber-300; }
+
+}
+
+.scrollbar-thin { scrollbar-width: thin; }
+.recharts-text { fill: currentColor; }
+.recharts-cartesian-axis-tick-value { font-size: 11px; }
+.recharts-default-tooltip { border-radius: 8px !important; }
+
+/* evidence highlighting (unlayered: class names are built dynamically, so they must never be purged) */
+.ev { @apply rounded px-0.5 font-medium; }
+.ev-phase { @apply bg-sky-100 text-sky-900 dark:bg-sky-500/20 dark:text-sky-200; }
+.ev-status { @apply bg-violet-100 text-violet-900 dark:bg-violet-500/20 dark:text-violet-200; }
+.ev-tag { @apply bg-amber-100 text-amber-900 dark:bg-amber-500/20 dark:text-amber-200; }
+.ev-quantity { @apply bg-emerald-100 text-emerald-900 dark:bg-emerald-500/20 dark:text-emerald-200; }
+.ev-date { @apply bg-rose-100 text-rose-900 dark:bg-rose-500/20 dark:text-rose-200; }
+.ev-area { @apply bg-teal-100 text-teal-900 dark:bg-teal-500/20 dark:text-teal-200; }
+.ev-discipline { @apply bg-indigo-100 text-indigo-900 dark:bg-indigo-500/20 dark:text-indigo-200; }
+.ev-new_work_cue { @apply bg-orange-100 text-orange-900 dark:bg-orange-500/20 dark:text-orange-200; }

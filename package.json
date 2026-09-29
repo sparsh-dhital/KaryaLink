@@ -1,0 +1,23 @@
+{
+  "name": "sitesync",
+  "version": "1.0.0",
+  "private": true,
+  "description": "SiteSync - intelligent data capture & schedule-linking layer (SIH 2026, PS SIH26122, Oil India Limited)",
+  "scripts": {
+    "postinstall": "node scripts/postinstall.js",
+    "setup": "node scripts/setup-python.js",
+    "seed": "node scripts/py.js -m sitesync.services.seeding",
+    "dev": "concurrently -k -n api,web -c blue,green \"npm:dev:api\" \"npm:dev:web\"",
+    "dev:api": "node scripts/py.js -m uvicorn sitesync.api:app --host 127.0.0.1 --port 8000",
+    "dev:web": "npm --prefix frontend run dev",
+    "build": "npm --prefix frontend run build",
+    "typecheck": "npm --prefix frontend run typecheck",
+    "test": "node scripts/py.js -m pytest backend/tests -q && npm --prefix frontend run typecheck",
+    "test:backend": "node scripts/py.js -m pytest backend/tests -q",
+    "screenshots": "node scripts/screenshots.mjs"
+  },
+  "devDependencies": {
+    "concurrently": "^9.0.1",
+    "playwright": "^1.63.0"
+  }
+}
