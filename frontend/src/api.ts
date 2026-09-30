@@ -1,4 +1,4 @@
-import { apiUrl } from "./lib/config";
+import { API_BASE, apiUrl } from "./lib/config";
 import type {
   Activity, ActualEventRow, AssistantContext, ChatMsg, ReportStats, DelayFlag, GanttRow, HistoryRow, LedgerItem, Meta, Metrics, Report, Summary, Thresholds, WbsNodeT,
 } from "./types";
@@ -16,7 +16,14 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   try {
     res = await fetch(apiUrl(path), init);
   } catch {
-    throw new ApiError("Cannot reach the KaryaLink server. Is `npm run dev` running?", 0);
+    throw new ApiError(
+      import.meta.env.DEV
+        ? "Cannot reach the KaryaLink server. Is `npm run dev` running?"
+        : API_BASE
+          ? `Cannot reach the KaryaLink API at ${API_BASE}. It may be waking up (free tier, ~1 min) or not deployed - check ${API_BASE}/api/health.`
+          : "The KaryaLink API address is not configured: set VITE_API_URL to the Render service URL and redeploy.",
+      0,
+    );
   }
   if (!res.ok) {
     let msg = `${res.status} ${res.statusText}`;
