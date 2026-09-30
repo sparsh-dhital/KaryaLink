@@ -58,7 +58,7 @@ STATUSES: dict[str, list[str]] = {
                  r"chal (?:raha|rahi|rhi|rha)(?: hai| he)?", r"jaari", r"chalu hai", r"ho raha hai",
                  r"जारी", r"चल रहा"],
     "complete": [r"complet\w*", r"\bcompl\b", r"\bcmpltd\b", r"\bdone\b", r"finish\w*", r"\bover\b",
-                 r"ho gaya", r"ho gya", r"ho gayi", r"pura\b", r"poora", r"khatam", r"hua\b",
+                 r"ho gaya", r"ho gya", r"ho gayi", r"ho gaye", r"ho gae", r"pura\b", r"poora", r"khatam", r"hua\b",
                  r"पूरा", r"हो गया", r"समाप्त", r"\b(?:kar|laga|rakh|bichha|dal) (?:diya|di|diye)\b",
                  r"\bdiya\b", r"\bdiye\b"],
 }
@@ -111,3 +111,50 @@ CORRECTION_VOCAB = [
 
 MONTHS = {m: i for i, m in enumerate(
     ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"], start=1)}
+
+
+# ---------------------------------------------------------------------------------------------
+# Speech-to-text normalisation. Browser hi-IN recognition returns Devanagari, and spells tag
+# letters out ("एफ 12" = F-12, "सी टी बी 07" = CT-B-07). These maps transliterate tokens so the
+# same rules apply; evidence spans still point at the original Devanagari text.
+
+# Spoken letter names -> latin letter (used only when followed by a digit / another letter / dash,
+# because some double as Hindi words: "के" = "of", "जी" = "ji").
+DEVA_LETTERS = {
+    "ए": "a", "बी": "b", "सी": "c", "डी": "d", "ई": "e", "एफ": "f", "जी": "g", "एच": "h", "आई": "i",
+    "जे": "j", "के": "k", "एल": "l", "एम": "m", "एन": "n", "ओ": "o", "पी": "p", "क्यू": "q", "आर": "r",
+    "एस": "s", "टी": "t", "यू": "u", "वी": "v", "डब्ल्यू": "w", "डबल्यू": "w", "एक्स": "x", "वाई": "y",
+    "जेड": "z", "ज़ेड": "z",
+    # common letter pairs recognisers emit as one token
+    "पीटी": "pt", "एफटी": "ft", "एलटी": "lt", "टीटी": "tt", "पीजी": "pg", "सीटी": "ct", "एसएस": "ss",
+}
+DEVA_WORDS = {
+    "लाइन": "line", "लाईन": "line", "फाउंडेशन": "foundation", "फाउंडेशन्स": "foundation", "स्पूल": "spool",
+    "स्पूल्स": "spools", "केबल": "cable", "ट्रे": "tray", "वेल्डिंग": "welding", "वेल्ड": "weld",
+    "जॉइंट": "joint", "जोइंट": "joint", "जॉइंट्स": "joints", "इरेक्शन": "erection", "फैब्रिकेशन": "fabrication",
+    "फेब्रिकेशन": "fabrication", "हाइड्रोटेस्ट": "hydrotest", "हाइड्रो": "hydro", "टेस्ट": "test", "प्रेशर": "pressure",
+    "पुलिंग": "pulling", "टर्मिनेशन": "termination", "इंस्टॉलेशन": "installation", "इंस्टालेशन": "installation",
+    "इंस्टॉल": "install", "अलाइनमेंट": "alignment", "ग्राउटिंग": "grouting", "बैकफिल": "backfill",
+    "बैकफिलिंग": "backfilling", "कंक्रीट": "concrete", "कंक्रीटिंग": "concreting", "पोरिंग": "pouring",
+    "कास्टिंग": "casting", "शटरिंग": "shuttering", "पंप": "pump", "टैंक": "tank", "कंप्रेसर": "compressor",
+    "वेसल": "vessel", "मीटर": "meter", "क्यूबिक": "cubic", "टन": "ton", "नग": "nos", "प्रतिशत": "percent",
+    "परसेंट": "percent", "यूनिट": "unit", "एरिया": "area", "में": "me", "मे": "me", "से": "se", "हो": "ho",
+    "गया": "gaya", "गए": "gaye", "गई": "gayi", "गयी": "gayi", "शुरू": "shuru", "पूरा": "pura", "पूरी": "puri",
+    "चल": "chal", "रहा": "raha", "रही": "rahi", "है": "hai", "आज": "aaj", "कल": "kal", "परसों": "parso",
+    "का": "ka", "की": "ki", "के": "ke", "और": "aur", "जी": "ji", "डन": "done", "कंप्लीट": "complete",
+    "कम्पलीट": "complete", "स्टार्ट": "start", "स्टार्टेड": "started", "प्रोग्रेस": "progress", "लूप": "loop",
+    "चेक": "check", "ट्यूबिंग": "tubing", "हुकअप": "hookup", "सेटिंग": "setting", "बैरिकेडिंग": "barricading",
+    "ऑडिट": "audit", "हाइड्रेंट": "hydrant", "शावर": "shower", "सेफ्टी": "safety", "इंस्ट्रूमेंट": "instrument",
+    "ट्रांसमीटर": "transmitter", "डैश": "-", "हाइफ़न": "-", "हाइफन": "-", "इंच": "inch", "स्टेटस": "status",
+    "क्या": "kya", "कितना": "kitna", "कितनी": "kitni", "बताओ": "batao", "बताइए": "bataiye", "लगा": "laga",
+    "दिया": "diya", "दिए": "diye", "खत्म": "khatam", "ख़त्म": "khatam", "जारी": "jaari", "अतिरिक्त": "extra",
+    "नया": "naya", "नई": "nayi", "एक्स्ट्रा": "extra",
+}
+DEVA_NUMBERS = {
+    "शून्य": 0, "एक": 1, "दो": 2, "तीन": 3, "चार": 4, "पांच": 5, "पाँच": 5, "छह": 6, "छः": 6, "छे": 6,
+    "सात": 7, "आठ": 8, "नौ": 9, "दस": 10, "ग्यारह": 11, "बारह": 12, "तेरह": 13, "चौदह": 14, "पंद्रह": 15,
+    "सोलह": 16, "सत्रह": 17, "अठारह": 18, "उन्नीस": 19, "बीस": 20, "पच्चीस": 25, "तीस": 30, "चालीस": 40,
+    "पचास": 50, "साठ": 60, "सत्तर": 70, "अस्सी": 80, "नब्बे": 90, "सौ": 100,
+}
+DEVA_DIGITS = str.maketrans("०१२३४५६७८९", "0123456789")
+SPOKEN_PUNCT = {"dash": "-", "hyphen": "-", "minus": "-"}

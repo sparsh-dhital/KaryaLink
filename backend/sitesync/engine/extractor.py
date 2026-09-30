@@ -21,31 +21,91 @@ UNIT_RE = re.compile(_UNIT_ALT)
 _KNOWN_RE = re.compile("|".join(p for pats in list(L.PHASES.values()) + list(L.STATUSES.values()) for p in pats))
 
 
+def _is_deva(tok: str) -> bool:
+    return any("ऀ" <= ch <= "ॿ" for ch in tok)
+
+
 class Normalized:
+    """Lower-cased, typo-corrected, speech-normalised copy of the text with an offset map.
+
+    Pipeline per token: Devanagari digits/number words/letter names/words -> latin; English number
+    words -> digits; spoken "dash" -> "-"; typo correction. Then spelled-out tags are merged
+    ("c t b 07" -> "ctb 07"). Each normalised char maps back to the original text for evidence.
+    """
+
     def __init__(self, text: str, learned: dict[str, str] | None = None):
         self.text = text
+        self.corrections: list[dict] = []
+        raw = [(m.group(0), m.start()) for m in TOKEN_RE.finditer(text)]
+        toks: list[list] = []  # [rep, start, end]
+        for i, (tok, s) in enumerate(raw):
+            toks.append([self._map(tok, s, raw, i, learned), s, s + len(tok)])
+        toks = self._merge_letters(toks)
         parts: list[str] = []
         omap: list[int] = []
-        self.corrections: list[dict] = []
-        for m in TOKEN_RE.finditer(text):
-            tok, s = m.group(0), m.start()
-            low = tok.lower()
-            rep = low
-            if low in L.NUMBER_WORDS and low.isalpha():
-                rep = str(L.NUMBER_WORDS[low])
-            elif (len(low) >= 5 and low.isascii() and low.isalpha() and not _KNOWN_RE.fullmatch(low)
-                  and low not in (learned or {})):
-                best = process.extractOne(low, L.CORRECTION_VOCAB, scorer=fuzz.ratio, score_cutoff=84)
-                if best and best[0] != low and best[0][0] == low[0]:
-                    rep = best[0]
-                    self.corrections.append({"from": tok, "to": rep, "start": s, "end": s + len(tok)})
-            n = len(rep)
+        for rep, s, e in toks:
+            n, span = len(rep), e - s
             for i in range(n):
-                omap.append(s + (round(i * (len(tok) - 1) / (n - 1)) if n > 1 else 0))
+                omap.append(s + (round(i * (span - 1) / (n - 1)) if n > 1 else 0))
             parts.append(rep)
         self.norm = "".join(parts)
         self.omap = omap
         self.claimed: list[tuple[int, int]] = []
+
+    @staticmethod
+    def _next_word(raw, i):
+        for tok, _ in raw[i + 1:]:
+            if not tok.isspace():
+                return tok
+        return ""
+
+    def _map(self, tok: str, s: int, raw, i: int, learned) -> str:
+        low = tok.lower()
+        if _is_deva(tok):
+            t = tok.translate(L.DEVA_DIGITS)
+            if t.isdigit():
+                return t
+            if t in L.DEVA_NUMBERS:
+                return str(L.DEVA_NUMBERS[t])
+            if t in L.DEVA_LETTERS:
+                nxt = self._next_word(raw, i).translate(L.DEVA_DIGITS)
+                if nxt[:1].isdigit() or nxt == "-" or nxt in L.DEVA_LETTERS or t not in L.DEVA_WORDS:
+                    return L.DEVA_LETTERS[t]
+            return L.DEVA_WORDS.get(t, t)
+        if low in L.NUMBER_WORDS and low.isalpha():
+            return str(L.NUMBER_WORDS[low])
+        if low in L.SPOKEN_PUNCT:
+            return L.SPOKEN_PUNCT[low]
+        if (len(low) >= 5 and low.isascii() and low.isalpha() and not _KNOWN_RE.fullmatch(low)
+                and low not in (learned or {})):
+            best = process.extractOne(low, L.CORRECTION_VOCAB, scorer=fuzz.ratio, score_cutoff=84)
+            if best and best[0] != low and best[0][0] == low[0]:
+                self.corrections.append({"from": tok, "to": best[0], "start": s, "end": s + len(tok)})
+                return best[0]
+        return low
+
+    @staticmethod
+    def _merge_letters(toks: list[list]) -> list[list]:
+        """Join runs of >=2 single spelled letters: 'c t b 07' -> 'ctb 07', 'p t 1021' -> 'pt 1021'."""
+        def letter(t):
+            return len(t[0]) == 1 and t[0].isascii() and t[0].isalpha()
+
+        out: list[list] = []
+        i = 0
+        while i < len(toks):
+            if letter(toks[i]):
+                run = [i]
+                j = i + 1
+                while j + 1 < len(toks) and toks[j][0].isspace() and letter(toks[j + 1]):
+                    run.append(j + 1)
+                    j += 2
+                if len(run) >= 2 and sum(len(toks[k][0]) for k in run) <= 4:
+                    out.append(["".join(toks[k][0] for k in run), toks[run[0]][1], toks[run[-1]][2]])
+                    i = run[-1] + 1
+                    continue
+            out.append(toks[i])
+            i += 1
+        return out
 
     def span(self, ns: int, ne: int) -> tuple[int, int, str]:
         s = self.omap[ns]
@@ -232,6 +292,7 @@ Q_HI = re.compile(rf"(\d+(?:\.\d+)?)\s*(?:me se|mein se|में से)\s*(\d+
 Q_PCT = re.compile(r"(\d{1,3}(?:\.\d+)?)\s*(?:%|percent\b|pct\b|प्रतिशत)")
 Q_INC = re.compile(rf"(\+\s*|\baur\s+)?(\d+(?:\.\d+)?)\s*(more\s+)?({_UNIT_ALT})(\s*(?:more|added|extra))?")
 Q_IDS = re.compile(r"\b([sj])\s*-\s*(\d{1,3})\b")
+Q_INC_BARE = re.compile(r"\baur\s+(\d+(?:\.\d+)?)\b(?!\s*(?:%|percent))|\b(\d+(?:\.\d+)?)\s+more\b")
 
 
 def extract_quantity(nt: Normalized) -> tuple[dict | None, list[dict]]:
@@ -261,6 +322,11 @@ def extract_quantity(nt: Normalized) -> tuple[dict | None, list[dict]]:
         nt.claim(m.start(), m.end())
         return _field(nt, m.start(), m.end(), float(m.group(2)), total=None, unit=_unit(m.group(4)),
                       mode="incremental" if marker else "incremental_assumed"), ids
+    m = Q_INC_BARE.search(nt.norm)
+    if m and nt.free(m.start(), m.end()):
+        nt.claim(m.start(), m.end())
+        return _field(nt, m.start(), m.end(), float(m.group(1) or m.group(2)), total=None, unit=None,
+                      mode="incremental"), ids
     if ids:
         unit = "spools" if ids[0]["value"].startswith("S") else "joints"
         s = min(i["start"] for i in ids)
@@ -333,6 +399,10 @@ def extract(text: str, report_date: date, reporter_discipline: str | None = None
             status = {**{k: qty[k] for k in ("start", "end", "evidence")}, "value": "progress", "source": "rule:qty"}
     if qty and qty["mode"] == "percent" and qty["value"] < 100 and (status is None or status["value"] == "complete"):
         status = {**{k: qty[k] for k in ("start", "end", "evidence")}, "value": "progress", "source": "rule:qty"}
+    if (qty and qty["mode"] == "incremental" and status and status["value"] == "complete"
+            and not re.search(r"complet|cmpl|finish|pura|poora|khatam|over|पूरा|समाप्त", (status.get("evidence") or "").lower())):
+        # "3 more spools done" / "aur 2 ho gaye" is progress; completion follows from the roll-up
+        status = {**status, "value": "progress", "source": "rule:incremental"}
     if status is None and qty is not None:
         status = {**{k: qty[k] for k in ("start", "end", "evidence")}, "value": "progress", "source": "rule:qty"}
 

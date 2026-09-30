@@ -88,7 +88,36 @@ def summary(db: Session) -> dict:
         by_disc[d] = {"actual_pct": round(sum(budgets[a.activity_id] * a.pct for a in sel) / b, 1),
                       "planned_pct": round(sum(budgets[a.activity_id] * planned_pct(a.to_dict(), today) for a in sel) / b, 1),
                       "activities": len(sel)}
+    # per-unit portfolio (units are the "projects" inside this one synthetic facility)
+    names = {n.code: n.name for n in db.execute(select(WbsNode).where(WbsNode.level == 2)).scalars()}
+    flags = {x["activity_id"]: x["level"] for x in dl}
+    by_area = []
+    for area in sorted({a.area for a in acts}):
+        sel = [a for a in acts if a.area == area]
+        b = sum(budgets[a.activity_id] for a in sel) or 1
+        act_pct = round(sum(budgets[a.activity_id] * a.pct for a in sel) / b, 1)
+        plan_pct = round(sum(budgets[a.activity_id] * planned_pct(a.to_dict(), today) for a in sel) / b, 1)
+        active = [a for a in sel if a.actual_start and not a.actual_finish]
+        phases: dict[str, int] = {}
+        for a in active:
+            phases[a.phase] = phases.get(a.phase, 0) + 1
+        gap = act_pct - plan_pct
+        by_area.append({
+            "area": area, "name": next((v for k, v in names.items() if k.endswith(area.replace("-", ""))), area),
+            "actual_pct": act_pct, "planned_pct": plan_pct, "variance": round(gap, 1),
+            "status": "complete" if act_pct >= 99.9 else "on_track" if gap >= -3 else "at_risk" if gap >= -10 else "behind",
+            "activities": len(sel), "completed": sum(1 for a in sel if a.actual_finish), "in_progress": len(active),
+            "red_flags": sum(1 for a in sel if flags.get(a.activity_id) == "red"),
+            "amber_flags": sum(1 for a in sel if flags.get(a.activity_id) == "amber"),
+            "current_phase": max(phases, key=phases.get) if phases else None,
+            "last_update": max((a.last_update for a in sel if a.last_update), default=None),
+        })
+    iso = today.isoformat()
+    todays = db.execute(select(Report.status, Report.decision).where(Report.report_date == iso)).all()
     return {
+        "by_area": by_area,
+        "updates_today": len(todays),
+        "linked_today": sum(1 for s, _ in todays if s == "applied"),
         "project": "GGS-7 Gas Gathering Station (fictional)",
         "data_date": today.isoformat(),
         "actual_pct": r["actual_pct"], "planned_pct": r["planned_pct"],

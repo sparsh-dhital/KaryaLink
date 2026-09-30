@@ -1,11 +1,10 @@
-"""SiteSync HTTP API (FastAPI)."""
+"""KaryaLink HTTP API (FastAPI). Internal package name: sitesync."""
 from __future__ import annotations
 
 import asyncio
 import hashlib
 import logging
 import threading
-import time
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -54,20 +53,35 @@ async def lifespan(app: FastAPI):
     yield
 
 
-app = FastAPI(title="SiteSync API", version=__version__, lifespan=lifespan)
+app = FastAPI(title="KaryaLink API", description="Site-to-Schedule Intelligence", version=__version__, lifespan=lifespan)
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 RESETTING = threading.Event()
+_ACTIVE = 0
+_ACTIVE_COND = threading.Condition()
 
 
 @app.middleware("http")
 async def hold_during_reset(request: Request, call_next):
-    """While the demo database is being rebuilt, park other API calls instead of failing them."""
-    if RESETTING.is_set() and request.url.path.startswith("/api/") and request.url.path != "/api/demo/reset":
-        for _ in range(600):  # up to 60 s
+    """Reset drops and rebuilds tables: park new API calls while it runs, and let the reset wait
+    for in-flight calls to finish first (so no request ever sees half-built tables)."""
+    global _ACTIVE
+    path = request.url.path
+    if not path.startswith("/api/") or path == "/api/demo/reset":
+        return await call_next(request)
+    for _ in range(900):  # up to 90 s
+        with _ACTIVE_COND:
             if not RESETTING.is_set():
+                _ACTIVE += 1
                 break
-            await asyncio.sleep(0.1)
-    return await call_next(request)
+        await asyncio.sleep(0.1)
+    else:
+        return JSONResponse(status_code=503, content={"detail": "The demo database is being reset - try again in a moment."})
+    try:
+        return await call_next(request)
+    finally:
+        with _ACTIVE_COND:
+            _ACTIVE -= 1
+            _ACTIVE_COND.notify_all()
 
 
 @app.exception_handler(R.WorkflowError)
@@ -235,37 +249,56 @@ async def upload_report(file: UploadFile = File(...), reporter: str = Form("Site
     raw = await file.read()
     if len(raw) > MAX_UPLOAD:
         raise HTTPException(413, "File too large (max 10 MB)")
-    name = file.filename or "upload"
-    low = name.lower()
     with WRITE_LOCK:
-        if low.endswith((".xlsx", ".xlsm", ".xls", ".csv")):
-            try:
-                texts = R.spreadsheet_rows_to_texts(raw, name)
-            except Exception as e:
-                raise HTTPException(400, f"Could not read spreadsheet: {e}") from None
-            reps = [R.submit_report(db, t, reporter, reporter_discipline, "spreadsheet", None, photo_id,
-                                    source_file=name) for t in texts]
-            ledger.append(db, "DOCUMENT_INGESTED", {"source_file": name, "rows": len(reps)}, actor=reporter)
-            return {"reports": [report_json(r) for r in reps], "informational_lines": []}
-        if low.endswith((".txt", ".md", ".log")) or file.content_type in ("text/plain",):
-            text = raw.decode("utf-8", errors="replace")
-            out = R.submit_document(db, text, reporter, reporter_discipline, "file", name, None, photo_id)
-            return {"reports": [report_json(r) for r in out["reports"]],
-                    "informational_lines": out["informational_lines"]}
-    raise HTTPException(400, "Supported report files: .txt daily report, .csv or .xlsx spreadsheet")
+        out = R.ingest_file(db, raw, file.filename or "upload", reporter, reporter_discipline, photo_id)
+    return {"reports": [report_json(r) for r in out["reports"]], "informational_lines": out["informational_lines"]}
 
 
 @app.get("/api/reports")
-def list_reports(status: str | None = None, decision: str | None = None, limit: int = 100, offset: int = 0,
-                 db=Depends(get_db)):
+def list_reports(status: str | None = None, decision: str | None = None, channel: str | None = None, q: str = "",
+                 limit: int = 100, offset: int = 0, db=Depends(get_db)):
     stmt = select(Report)
     if status:
-        stmt = stmt.where(Report.status == status)
+        stmt = stmt.where(Report.status.in_(status.split(","))) if "," in status else stmt.where(Report.status == status)
     if decision:
         stmt = stmt.where(Report.decision == decision)
+    if channel:
+        stmt = stmt.where(Report.channel == channel)
+    if q:
+        stmt = stmt.where(or_(Report.text.ilike(f"%{q}%"), Report.reporter.ilike(f"%{q}%")))
     total = db.execute(select(func.count()).select_from(stmt.subquery())).scalar_one()
-    rows = db.execute(stmt.order_by(Report.id.desc()).offset(offset).limit(min(limit, 500))).scalars()
-    return {"total": total, "items": [report_json(r, full=False) for r in rows]}
+    rows = list(db.execute(stmt.order_by(Report.id.desc()).offset(offset).limit(min(limit, 500))).scalars())
+    ids = {r.activity_id for r in rows if r.activity_id} | {
+        r.analysis["candidates"][0]["activity_id"] for r in rows if r.analysis.get("candidates")}
+    names = {a.activity_id: a.name for a in db.execute(select(Activity).where(Activity.activity_id.in_(ids))).scalars()} if ids else {}
+    items = []
+    for r in rows:
+        d = report_json(r, full=False)
+        top = r.analysis["candidates"][0] if r.analysis.get("candidates") else None
+        d["activity_name"] = names.get(r.activity_id) if r.activity_id else None
+        d["top_candidate"] = {"activity_id": top["activity_id"], "name": names.get(top["activity_id"], top["activity"]["name"]),
+                              "confidence": top["confidence"]} if top else None
+        items.append(d)
+    return {"total": total, "items": items}
+
+
+@app.get("/api/reports/stats")
+def report_stats(db=Depends(get_db)):
+    """Live operational statistics over submitted reports (not the benchmark)."""
+    rows = db.execute(select(Report.report_date, Report.decision, Report.status, Report.channel, Report.reporter_discipline)).all()
+    by_day: dict[str, dict] = {}
+    by_channel: dict[str, int] = {}
+    by_decision: dict[str, int] = {}
+    by_status: dict[str, int] = {}
+    for d, dec, st, ch, _ in rows:
+        day = by_day.setdefault(d, {"date": d, "total": 0, "auto": 0, "review": 0})
+        day["total"] += 1
+        day["auto" if dec == policy.AUTO_APPLY else "review"] += 1
+        by_channel[ch] = by_channel.get(ch, 0) + 1
+        by_decision[dec] = by_decision.get(dec, 0) + 1
+        by_status[st] = by_status.get(st, 0) + 1
+    return {"total": len(rows), "by_day": sorted(by_day.values(), key=lambda x: x["date"]), "by_channel": by_channel,
+            "by_decision": by_decision, "by_status": by_status}
 
 
 @app.get("/api/reports/{report_id}")
@@ -311,6 +344,18 @@ def report_answer(report_id: int, body: AnswerIn, db=Depends(get_db)):
     with WRITE_LOCK:
         r = R.answer(db, report_id, body.value, body.actor)
     return report_json(r)
+
+
+class RevertIn(BaseModel):
+    actor: str = "planner"
+    reason: str = Field(default="reverted by planner", max_length=200)
+
+
+@app.post("/api/reports/{report_id}/revert")
+def report_revert(report_id: int, body: RevertIn, db=Depends(get_db)):
+    with WRITE_LOCK:
+        R.revert_report(db, report_id, body.actor, body.reason)
+    return report_json(db.get(Report, report_id))
 
 
 class BulkIn(BaseModel):
@@ -423,19 +468,19 @@ def learning_state(db=Depends(get_db)):
 @app.get("/api/export/schedule.csv")
 def export_csv(db=Depends(get_db)):
     return Response(schedule_io.export_csv(db), media_type="text/csv",
-                    headers={"Content-Disposition": "attachment; filename=sitesync_schedule_actuals.csv"})
+                    headers={"Content-Disposition": "attachment; filename=karyalink_schedule_actuals.csv"})
 
 
 @app.get("/api/export/schedule.xml")
 def export_xml(db=Depends(get_db)):
     return Response(schedule_io.export_mspdi(db), media_type="application/xml",
-                    headers={"Content-Disposition": "attachment; filename=sitesync_schedule_mspdi.xml"})
+                    headers={"Content-Disposition": "attachment; filename=karyalink_schedule_mspdi.xml"})
 
 
 @app.get("/api/export/actuals.csv")
 def export_actuals(db=Depends(get_db)):
     return Response(schedule_io.export_actuals_dataset(db), media_type="text/csv",
-                    headers={"Content-Disposition": "attachment; filename=sitesync_actuals_dataset.csv"})
+                    headers={"Content-Disposition": "attachment; filename=karyalink_actuals_dataset.csv"})
 
 
 # ------------------------------------------------------------------ audit
@@ -516,13 +561,33 @@ class ChatAnswerIn(BaseModel):
     value: str
     lang: str = "en-IN"
     reporter: str = "Site supervisor"
+    label: str | None = None
 
 
 @app.post("/api/assistant/answer")
 def chat_answer(body: ChatAnswerIn, db=Depends(get_db)):
     with WRITE_LOCK:
-        msgs = assistant.answer(db, body.session_id, body.value, body.lang, body.reporter)
+        msgs = assistant.answer(db, body.session_id, body.value, body.lang, body.reporter, body.label)
     return {"messages": msgs}
+
+
+@app.post("/api/assistant/upload")
+async def chat_upload(file: UploadFile = File(...), session_id: str = Form(...), lang: str = Form("en-IN"),
+                      reporter: str = Form("Site supervisor"), discipline: str | None = Form(None),
+                      photo_id: int | None = Form(None), db=Depends(get_db)):
+    raw = await file.read()
+    if len(raw) > MAX_UPLOAD:
+        raise HTTPException(413, "File too large (max 10 MB)")
+    with WRITE_LOCK:
+        msgs = assistant.upload(db, session_id, raw, file.filename or "upload", lang, reporter, discipline, photo_id)
+    return {"messages": msgs}
+
+
+@app.delete("/api/assistant/history/{session_id}")
+def chat_clear(session_id: str, db=Depends(get_db)):
+    with WRITE_LOCK:
+        assistant.clear_history(db, session_id)
+    return {"ok": True}
 
 
 class EodIn(BaseModel):
@@ -560,8 +625,9 @@ def demo_reset():
     from .services.seeding import seed
 
     with WRITE_LOCK:
-        RESETTING.set()
-        time.sleep(0.6)  # let in-flight reads finish before tables are dropped
+        with _ACTIVE_COND:
+            RESETTING.set()
+            _ACTIVE_COND.wait_for(lambda: _ACTIVE == 0, timeout=30)  # drain in-flight requests
         try:
             return seed(regenerate=False, verbose=False)
         finally:
@@ -596,6 +662,11 @@ def sample(name: str):
     if not path.exists():
         raise HTTPException(404, "Sample not generated yet - run `npm run seed`")
     return FileResponse(path, media_type=SAMPLES[name], filename=name)
+
+
+@app.get("/api/assistant/context/{session_id}")
+def chat_context(session_id: str, discipline: str | None = None, db=Depends(get_db)):
+    return assistant.context(db, session_id, discipline)
 
 
 # ------------------------------------------------------------------ built frontend (optional, production mode)

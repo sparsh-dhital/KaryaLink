@@ -18,7 +18,7 @@ from ..engine.extractor import extract
 from .core import invalidate_engine, project_today
 
 NS = "http://schemas.microsoft.com/project"
-# MS Project custom field IDs (Text1..Text5) used to round-trip SiteSync attributes
+# MS Project custom field IDs (Text1..Text5) used to round-trip KaryaLink attributes
 FIELD_IDS = {"activity_id": "188743731", "discipline": "188743734", "area": "188743737", "tag": "188743740",
              "phase": "188743743"}
 FIELD_ALIASES = {"activity_id": "Text1", "discipline": "Text2", "area": "Text3", "tag": "Text4", "phase": "Text5"}
@@ -299,7 +299,7 @@ def export_mspdi(db: Session) -> str:
             s[0], s[1] = min(s[0], a.planned_start), max(s[1], a.planned_finish)
             node = nodes[node].parent if node in nodes else None
 
-    tasks = [task_xml(0, "GGS-7 SiteSync export", "0", "0", 0, min(starts), max(finishes), True, 0)]
+    tasks = [task_xml(0, "GGS-7 KaryaLink export", "0", "0", 0, min(starts), max(finishes), True, 0)]
     for kind, obj, outline, level in order:
         if kind == "node":
             a = own_node.get(obj.code)
@@ -320,8 +320,8 @@ def export_mspdi(db: Session) -> str:
     ext_defs = "".join(f"<ExtendedAttribute><FieldID>{FIELD_IDS[k]}</FieldID><FieldName>{FIELD_ALIASES[k]}</FieldName>"
                        f"<Alias>{k}</Alias></ExtendedAttribute>" for k in FIELD_IDS)
     out.append('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>')
-    out.append(f'<Project xmlns="{NS}"><SaveVersion>14</SaveVersion><Name>GGS7_SiteSync.xml</Name>'
-               f"<Title>GGS-7 Gas Gathering Station (fictional) - SiteSync actuals</Title>"
+    out.append(f'<Project xmlns="{NS}"><SaveVersion>14</SaveVersion><Name>GGS7_KaryaLink.xml</Name>'
+               f"<Title>GGS-7 Gas Gathering Station (fictional) - KaryaLink actuals</Title>"
                f"<ScheduleFromStart>1</ScheduleFromStart><StartDate>{_dt(min(starts))}</StartDate>"
                f"<FinishDate>{_dt(max(finishes), True)}</FinishDate><CalendarUID>1</CalendarUID>"
                f"<MinutesPerDay>480</MinutesPerDay><MinutesPerWeek>2400</MinutesPerWeek><DaysPerMonth>20</DaysPerMonth>"

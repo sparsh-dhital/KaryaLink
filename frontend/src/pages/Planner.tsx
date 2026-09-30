@@ -1,14 +1,19 @@
 import clsx from "clsx";
-import { AlertTriangle, Check, ChevronRight, FilePlus2, Image as ImageIcon, Inbox, Mic, RefreshCw, Search, Shuffle, X } from "lucide-react";
+import { AlertTriangle, ArrowDownWideNarrow, ArrowUpNarrowWide, Check, ChevronLeft, ChevronRight, FilePlus2, Image as ImageIcon, Inbox, Mic, RefreshCw, Search, Shuffle, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../api";
+import { ConfidenceIndicator, decisionHeadline } from "../components/domain";
 import {
-  Card, ConfidenceBar, DecisionBadge, EmptyState, ErrorBanner, EVIDENCE_LEGEND, EvidenceText, Modal, ReasonChips, Spinner,
+  Card, DecisionBadge, EmptyState, ErrorBanner, EVIDENCE_LEGEND, EvidenceText, LoadingBlock, Modal, PageHeader, ReasonChips, Segmented,
   StatusBadge, useToast,
 } from "../components/ui";
 import { dataBus, demoRegistry, sleep } from "../lib/demo";
-import { DISC, PHASE, fmtDate } from "../lib/format";
+import { DISC, PHASE, fmtDate, fmtTime } from "../lib/format";
+import { PAGE } from "../lib/layout";
 import type { Activity, Meta, Report } from "../types";
+
+const PLANNER = "Planner (R. Sharma)";
+const linkConf = (r: Report) => r.candidates?.[0]?.confidence ?? 0;
 
 export default function Planner({ meta }: { meta: Meta | null }) {
   const [tab, setTab] = useState<"planner" | "supervisor">("planner");
@@ -16,11 +21,13 @@ export default function Planner({ meta }: { meta: Meta | null }) {
   const [error, setError] = useState<unknown>(null);
   const [selId, setSelId] = useState<number | null>(null);
   const [filter, setFilter] = useState<string>("all");
+  const [sort, setSort] = useState<"desc" | "asc">("desc");
   const [busy, setBusy] = useState(false);
   const [picker, setPicker] = useState(false);
   const [newModal, setNewModal] = useState(false);
   const [bulkMin, setBulkMin] = useState(0.6);
   const [flash, setFlash] = useState<string | null>(null);
+  const [mobileDetail, setMobileDetail] = useState(false);
   const toast = useToast();
   const threshold = meta?.thresholds.auto_apply ?? 0.8;
 
@@ -37,10 +44,12 @@ export default function Planner({ meta }: { meta: Meta | null }) {
   }, []);
   useEffect(() => { void load(); return dataBus.on(() => { void load(); }); }, [load]);
 
-  const items = useMemo(() => {
-    const xs = queue ? queue[tab] : [];
-    return filter === "all" ? xs : xs.filter((r) => r.decision === filter);
-  }, [queue, tab, filter]);
+  const view = useCallback((q: { planner: Report[]; supervisor: Report[] } | null) => {
+    const xs = q ? q[tab] : [];
+    const f = filter === "all" ? xs : xs.filter((r) => r.decision === filter);
+    return [...f].sort((a, b) => (sort === "desc" ? linkConf(b) - linkConf(a) : linkConf(a) - linkConf(b)) || a.id - b.id);
+  }, [tab, filter, sort]);
+  const items = useMemo(() => view(queue), [view, queue]);
   const sel = items.find((r) => r.id === selId) ?? items[0] ?? null;
   useEffect(() => { if (sel && sel.id !== selId) setSelId(sel.id); }, [sel, selId]);
 
@@ -49,11 +58,10 @@ export default function Planner({ meta }: { meta: Meta | null }) {
     setBusy(true);
     try {
       const idx = items.findIndex((r) => r.id === sel.id);
-      const r = await api.action(sel.id, { action, activity_id: activityId, planner: "Planner (R. Sharma)", ...extra });
+      const r = await api.action(sel.id, { action, activity_id: activityId, planner: PLANNER, ...extra });
       const label = { approve: "Approved", reassign: "Reassigned", reject: "Rejected", new_activity: "New activity created" }[action];
-      toast(action === "reject" ? "warn" : "ok", `${label}: report #${r.id}${r.activity_id ? ` → ${r.activity_id}` : ""}. Stored as a correction for learning.`);
-      const q = await load();
-      const next = q ? (filter === "all" ? q[tab] : q[tab].filter((x) => x.decision === filter)) : [];
+      toast(action === "reject" ? "warn" : "ok", `${label}: update #${r.id}${r.activity_id ? ` → ${r.activity_id}` : ""}. Stored as a correction for learning.`);
+      const next = view(await load());
       setSelId(next[Math.min(idx, next.length - 1)]?.id ?? null);
       dataBus.emit();
     } catch (e) {
@@ -61,9 +69,8 @@ export default function Planner({ meta }: { meta: Meta | null }) {
     } finally {
       setBusy(false);
     }
-  }, [sel, busy, items, load, filter, tab, toast]);
+  }, [sel, busy, items, load, view, toast]);
 
-  // keyboard shortcuts
   useEffect(() => {
     const h = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement;
@@ -109,7 +116,7 @@ export default function Planner({ meta }: { meta: Meta | null }) {
     setBusy(true);
     try {
       const r = await api.bulkApprove(bulkMin);
-      toast("ok", `Bulk-approved ${r.count} review item(s) ≥ ${Math.round(bulkMin * 100)}%`);
+      toast("ok", `Bulk-approved ${r.count} review item(s) with confidence ≥ ${Math.round(bulkMin * 100)}%`);
       await load();
       dataBus.emit();
     } catch (e) {
@@ -119,78 +126,83 @@ export default function Planner({ meta }: { meta: Meta | null }) {
     }
   };
 
+  const detail = sel ? (
+    <Detail r={sel} threshold={threshold} busy={busy} flash={flash}
+      onApprove={() => void act("approve")} onReassign={() => setPicker(true)} onReject={() => void act("reject")}
+      onNew={() => setNewModal(true)} onAssign={(id, rank) => void act(rank === 0 ? "approve" : "reassign", rank === 0 ? undefined : id)} />
+  ) : <Card><EmptyState icon={<Inbox className="h-5 w-5" />} title="Nothing selected" hint="Pick an item from the queue to see its evidence and candidates." /></Card>;
+
   return (
-    <div className="mx-auto max-w-7xl p-3 sm:p-5">
-      <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <h1 className="text-xl font-semibold">Planner review console</h1>
-          <p className="text-sm muted">Items the engine was not sure about, sorted by calibrated confidence. Every action is logged and becomes training data.</p>
-        </div>
-        <div className="flex flex-wrap items-center gap-2 text-xs muted">
-          <span className="kbd">A</span> approve <span className="kbd">R</span> reassign <span className="kbd">X</span> reject <span className="kbd">N</span> new activity <span className="kbd">J</span>/<span className="kbd">K</span> move
-        </div>
-      </div>
+    <div className={PAGE}>
+      <PageHeader eyebrow="Intelligence" title="Review queue"
+        description="Updates KaryaLink was not sure enough to apply on its own - ask, don't guess. Every decision here is logged and becomes training data."
+        actions={<div className="hidden items-center gap-1.5 text-2xs muted md:flex">
+          <span className="kbd">A</span> approve <span className="kbd">R</span> reassign <span className="kbd">X</span> reject <span className="kbd">N</span> new <span className="kbd">J</span><span className="kbd">K</span> move
+        </div>} />
       <ErrorBanner error={error} onRetry={() => void load()} />
-      <div className="mt-3 grid gap-4 lg:grid-cols-[minmax(300px,380px)_1fr]">
-        {/* queue */}
-        <Card pad={false} title={
-          <div className="flex gap-1">
-            {(["planner", "supervisor"] as const).map((t) => (
-              <button key={t} onClick={() => setTab(t)} className={clsx("rounded-md px-2.5 py-1 text-xs font-semibold", tab === t ? "bg-brand-600 text-white" : "hover:bg-ink-100 dark:hover:bg-ink-800")}>
-                {t === "planner" ? "Planner queue" : "Awaiting supervisor"} ({queue?.[t].length ?? 0})
+      <div className="grid gap-4 lg:grid-cols-[minmax(320px,400px)_minmax(0,1fr)]">
+        <Card pad={false}>
+          <div className="space-y-3 border-b p-3" style={{ borderColor: "var(--border)" }}>
+            <Segmented ariaLabel="Queue" value={tab} onChange={setTab} size="sm" options={[
+              { value: "planner", label: "Needs your review", count: queue?.planner.length },
+              { value: "supervisor", label: "Awaiting supervisor", count: queue?.supervisor.length },
+            ]} />
+            <div className="flex items-center gap-2">
+              <select className="select h-8 flex-1 text-xs" value={filter} onChange={(e) => setFilter(e.target.value)} aria-label="Filter by decision">
+                <option value="all">All reasons</option>
+                <option value="REVIEW">Medium confidence</option>
+                <option value="NEW_ACTIVITY">Possible new work</option>
+                <option value="CONFIRM_SEQUENCE">Sequence exception</option>
+                <option value="CLARIFY">Clarification</option>
+              </select>
+              <button className="btn-secondary btn-sm btn-icon" onClick={() => setSort((s) => (s === "desc" ? "asc" : "desc"))} title={sort === "desc" ? "Highest confidence first" : "Lowest confidence first"} aria-label="Toggle sort">
+                {sort === "desc" ? <ArrowDownWideNarrow className="h-4 w-4" /> : <ArrowUpNarrowWide className="h-4 w-4" />}
               </button>
-            ))}
-          </div>
-        } actions={<button className="btn-ghost btn-sm" onClick={() => void load()} aria-label="Refresh"><RefreshCw className="h-3.5 w-3.5" /></button>}>
-          <div className="flex items-center gap-2 border-b border-ink-100 px-3 py-2 dark:border-ink-800">
-            <select className="select py-1 text-xs" value={filter} onChange={(e) => setFilter(e.target.value)} aria-label="Filter by decision">
-              <option value="all">All decisions</option>
-              <option value="REVIEW">Planner review</option>
-              <option value="NEW_ACTIVITY">New activity</option>
-              <option value="CONFIRM_SEQUENCE">Sequence check</option>
-              <option value="CLARIFY">Clarify</option>
-            </select>
-          </div>
-          {tab === "planner" && (
-            <div className="flex flex-wrap items-center gap-2 border-b border-ink-100 px-3 py-2 text-xs dark:border-ink-800">
-              <span className="muted">Bulk approve reviews ≥</span>
-              <input type="range" min={0.3} max={0.95} step={0.05} value={bulkMin} onChange={(e) => setBulkMin(Number(e.target.value))} className="w-24 accent-brand-600" aria-label="Bulk approve threshold" />
-              <span className="w-9 font-semibold tabular-nums">{Math.round(bulkMin * 100)}%</span>
-              <button className="btn-success btn-sm ml-auto" disabled={!bulkCount || busy} onClick={bulk}>Approve {bulkCount}</button>
+              <button className="btn-ghost btn-sm btn-icon" onClick={() => void load()} aria-label="Refresh"><RefreshCw className="h-3.5 w-3.5" /></button>
             </div>
-          )}
-          {!queue ? <Spinner className="p-4" /> : items.length === 0 ? (
-            <EmptyState icon={<Inbox className="h-8 w-8" />} title="Queue is clear" hint="New low-confidence or unmatched reports will appear here." />
+            {tab === "planner" && (
+              <div className="flex items-center gap-2 rounded-lg px-2.5 py-2 text-xs" style={{ background: "var(--surface-2)" }}>
+                <span className="muted">Bulk approve ≥</span>
+                <input type="range" min={0.3} max={0.95} step={0.05} value={bulkMin} onChange={(e) => setBulkMin(Number(e.target.value))} className="w-20 flex-1 accent-brand-600" aria-label="Bulk approve threshold" />
+                <span className="w-9 font-semibold num">{Math.round(bulkMin * 100)}%</span>
+                <button className="btn-success btn-xs" disabled={!bulkCount || busy} onClick={bulk}>Approve {bulkCount}</button>
+              </div>
+            )}
+          </div>
+          {!queue ? <div className="p-4"><LoadingBlock rows={6} /></div> : items.length === 0 ? (
+            <EmptyState icon={<Check className="h-5 w-5" />} title="Queue is clear" hint="New low-confidence or unmatched updates will appear here automatically." />
           ) : (
-            <ul className="scrollbar-thin max-h-[65vh] divide-y divide-ink-100 overflow-y-auto dark:divide-ink-800">
-              {items.map((r) => (
-                <li key={r.id}>
-                  <button onClick={() => setSelId(r.id)} className={clsx("w-full px-3 py-2.5 text-left transition",
-                    sel?.id === r.id ? "bg-brand-50 dark:bg-brand-500/10" : "hover:bg-ink-50 dark:hover:bg-ink-800/60")}>
-                    <div className="flex items-center justify-between gap-2">
-                      <DecisionBadge kind={r.decision} />
-                      <span className="text-[11px] muted">#{r.id} · {fmtDate(r.report_date)}</span>
-                    </div>
-                    <p className="mt-1 line-clamp-2 text-sm">{r.text}</p>
-                    <div className="mt-1.5 flex items-center gap-2">
-                      <div className="flex-1"><ConfidenceBar value={r.decision === "NEW_ACTIVITY" ? (r.candidates?.[0]?.confidence ?? 0) : r.confidence} threshold={threshold} /></div>
-                      {r.channel === "voice" && <Mic className="h-3 w-3 muted" />}
-                      {r.photo_id && <ImageIcon className="h-3 w-3 muted" />}
-                    </div>
-                  </button>
-                </li>
-              ))}
+            <ul className="max-h-[68vh] divide-y overflow-y-auto" style={{ borderColor: "var(--border)" }}>
+              {items.map((r, i) => {
+                const top = r.candidates?.[0];
+                return (
+                  <li key={r.id}>
+                    <button onClick={() => { setSelId(r.id); setMobileDetail(true); }} className={clsx("relative w-full px-4 py-3 text-left transition",
+                      sel?.id === r.id ? "bg-brand-50/70 dark:bg-brand-500/[0.08]" : "hover:bg-[var(--hover)]")}>
+                      {sel?.id === r.id && <span className="absolute inset-y-2 left-0 w-[3px] rounded-r-full bg-brand-500" />}
+                      <div className="flex items-center gap-2 text-2xs muted">
+                        <span className="font-semibold text-ink-700 num dark:text-ink-300">{String(i + 1).padStart(2, "0")}</span>
+                        <DecisionBadge kind={r.decision} />
+                        <span className="ml-auto">#{r.id} · {fmtDate(r.report_date)}</span>
+                        {r.channel === "voice" && <Mic className="h-3 w-3" />}
+                        {r.photo_id && <ImageIcon className="h-3 w-3" />}
+                      </div>
+                      <p className="mt-1.5 line-clamp-2 text-[13px] leading-5 text-ink-900 dark:text-ink-50">“{r.text}”</p>
+                      {top && <p className="mt-1 truncate text-2xs muted">Suggested: <span className="text-ink-700 dark:text-ink-200">{top.activity.name}</span></p>}
+                      <div className="mt-2"><ConfidenceIndicator value={linkConf(r)} threshold={threshold} size="sm" /></div>
+                    </button>
+                  </li>
+                );
+              })}
             </ul>
           )}
         </Card>
-
-        {/* detail */}
-        {sel ? <Detail r={sel} threshold={threshold} busy={busy} flash={flash}
-          onApprove={() => void act("approve")} onReassign={() => setPicker(true)} onReject={() => void act("reject")}
-          onNew={() => setNewModal(true)} onAssign={(id, rank) => void act(rank === 0 ? "approve" : "reassign", rank === 0 ? undefined : id)} />
-          : <Card><EmptyState title="Select an item" hint="Pick a report from the queue to see evidence and candidates." /></Card>}
+        <div className="hidden min-w-0 lg:block">{detail}</div>
       </div>
 
+      <div className="lg:hidden">
+        <Modal open={mobileDetail && !!sel} onClose={() => setMobileDetail(false)} title={sel ? `Update #${sel.id}` : ""} wide>{detail}</Modal>
+      </div>
       <ActivityPicker open={picker} onClose={() => setPicker(false)} report={sel}
         onPick={(a) => { setPicker(false); void act("reassign", a.activity_id); }} />
       {sel && <NewActivityModal open={newModal} onClose={() => setNewModal(false)} report={sel}
@@ -208,86 +220,78 @@ function Detail({ r, threshold, busy, flash, onApprove, onReassign, onReject, on
   const fields: [string, string | null, string | null][] = ext ? [
     ["Phase", ext.phase ? PHASE[String(ext.phase.value)] ?? String(ext.phase.value) : null, ext.phase?.evidence ?? null],
     ["Status", ext.status ? String(ext.status.value) : null, ext.status?.evidence ?? null],
-    ["Tags", ext.tags.length ? ext.tags.map((t) => `${t.value} (${t.type})`).join(", ") : null, ext.tags.map((t) => t.evidence).join(", ") || null],
-    ["Quantity", ext.quantity ? `${ext.quantity.value}${ext.quantity.total ? ` of ${ext.quantity.total}` : ""} ${ext.quantity.unit ?? ""} · ${ext.quantity.mode}` : null, ext.quantity?.evidence ?? null],
+    ["Tags", ext.tags.length ? ext.tags.map((t) => `${t.value} (${t.type.replace("_", " ")})`).join(", ") : null, ext.tags.map((t) => t.evidence).join(", ") || null],
+    ["Quantity", ext.quantity ? `${ext.quantity.value}${ext.quantity.total ? ` of ${ext.quantity.total}` : ""} ${ext.quantity.unit ?? ""} · ${ext.quantity.mode.replace("_", " ")}` : null, ext.quantity?.evidence ?? null],
     ["Date", `${fmtDate(String(ext.date.value))}${ext.date.source === "assumed" ? " (assumed = report date)" : ""}`, ext.date.evidence],
     ["Area", ext.area ? String(ext.area.value) : null, ext.area?.evidence ?? null],
     ["Discipline", ext.discipline ? DISC[String(ext.discipline.value)] ?? String(ext.discipline.value) : null, ext.discipline?.evidence ?? null],
   ] : [];
-  const usedFields = new Set((r.evidence_spans ?? []).map((s) => s.field));
+  const used = new Set((r.evidence_spans ?? []).map((s) => s.field));
+  const actionable = r.status.startsWith("awaiting");
   return (
     <div className="space-y-4">
-      <Card title={<span className="flex flex-wrap items-center gap-2">Report #{r.id} <DecisionBadge kind={r.decision} /> <StatusBadge status={r.status} /></span>}
-        actions={<span className="text-xs muted">{r.reporter} · {r.channel}{r.external_id ? ` · ${r.external_id}` : ""}</span>}>
-        <div className="rounded-lg bg-ink-50 p-3 text-[15px] dark:bg-ink-800/60">
+      <Card title={<span className="flex flex-wrap items-center gap-2">Update #{r.id} <DecisionBadge kind={r.decision} /> <StatusBadge status={r.status} /></span>}
+        subtitle={`${r.reporter} · ${r.channel} · ${fmtTime(r.created_at)}${r.external_id ? ` · backlog ${r.external_id}` : ""}`}>
+        <div className="rounded-xl border p-4 text-[15px]" style={{ borderColor: "var(--border)", background: "var(--surface-2)" }}>
           <EvidenceText text={r.text} spans={r.evidence_spans ?? []} />
         </div>
-        <div className="mt-2 flex flex-wrap gap-1.5">
-          {Object.entries(EVIDENCE_LEGEND).filter(([k]) => usedFields.has(k)).map(([k, l]) => <mark key={k} className={clsx("ev text-[11px]", `ev-${k}`)}>{l}</mark>)}
+        <div className="mt-2 flex flex-wrap gap-1">
+          {Object.entries(EVIDENCE_LEGEND).filter(([k]) => used.has(k)).map(([k, l]) => <mark key={k} className={clsx("ev text-[10.5px]", `ev-${k}`)}>{l}</mark>)}
         </div>
-        {r.photo_id && <img src={`/api/photos/${r.photo_id}`} alt="photo evidence" className="mt-3 max-h-48 rounded-lg border border-ink-200 object-cover dark:border-ink-700" />}
+        {r.photo_id && <img src={`/api/photos/${r.photo_id}`} alt="Photo evidence" className="mt-3 max-h-48 rounded-xl border object-cover" style={{ borderColor: "var(--border)" }} />}
         {ext && (
-          <dl className="mt-3 grid grid-cols-1 gap-x-6 gap-y-1.5 text-sm sm:grid-cols-2">
+          <dl className="mt-4 grid grid-cols-1 gap-x-8 gap-y-2 text-[13px] sm:grid-cols-2">
             {fields.map(([k, v, ev]) => (
-              <div key={k} className="flex gap-2">
-                <dt className="w-20 shrink-0 muted">{k}</dt>
-                <dd className={clsx(!v && "muted italic")}>{v ?? "not found"}{ev && v ? <span className="ml-1 text-xs muted">“{ev}”</span> : null}</dd>
+              <div key={k} className="flex gap-3">
+                <dt className="w-20 shrink-0 text-xs muted">{k}</dt>
+                <dd className={clsx("min-w-0", !v && "muted italic")}>{v ?? "not found"}{ev && v ? <span className="ml-1.5 text-2xs muted">“{ev}”</span> : null}</dd>
               </div>
             ))}
           </dl>
         )}
-        {ext?.corrections && ext.corrections.length > 0 && (
-          <p className="mt-2 text-xs muted">Typos normalised: {ext.corrections.map((c) => `${c.from}→${c.to}`).join(", ")}</p>
-        )}
+        {ext?.corrections && ext.corrections.length > 0 && <p className="mt-2 text-2xs muted">Typos normalised: {ext.corrections.map((c) => `${c.from} → ${c.to}`).join(", ")}</p>}
         {r.warnings && r.warnings.length > 0 && (
-          <div className="mt-3 space-y-1.5">
+          <div className="mt-4 space-y-1.5">
             {r.warnings.map((w, i) => (
-              <div key={i} className="flex gap-2 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:bg-amber-500/10 dark:text-amber-200">
+              <div key={i} className="flex gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[13px] text-amber-900 dark:border-amber-500/25 dark:bg-amber-500/10 dark:text-amber-100">
                 <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" /> {w.message}
               </div>
             ))}
           </div>
         )}
-        {r.supervisor_note && <p className="mt-2 text-sm text-amber-700 dark:text-amber-300">{r.supervisor_note}</p>}
+        {r.supervisor_note && <p className="mt-3 text-[13px] text-amber-700 dark:text-amber-300">{r.supervisor_note}</p>}
         {dd?.kind === "NEW_ACTIVITY" && dd.proposal && (
-          <div className="mt-3 rounded-lg border border-dashed border-ink-300 p-3 text-sm dark:border-ink-600">
+          <div className="mt-4 rounded-xl border border-dashed p-3 text-[13px]" style={{ borderColor: "var(--border-strong)" }}>
             <p className="font-medium">Proposed new activity</p>
-            <p className="muted">Under WBS <span className="font-mono">{dd.proposal.parent_wbs ?? "-"}</span></p>
+            <p className="muted">Under WBS <span className="font-mono text-xs">{dd.proposal.parent_wbs ?? "-"}</span></p>
           </div>
         )}
-        {dd?.question && r.status === "awaiting_planner" && <p className="mt-2 text-sm"><span className="muted">Question for supervisor: </span>{dd.question}</p>}
-
-        {r.status.startsWith("awaiting") && (
-          <div className="mt-4 flex flex-wrap gap-2 border-t border-ink-100 pt-4 dark:border-ink-800">
-            <button className="btn-success" disabled={busy || !r.candidates?.length && r.decision !== "NEW_ACTIVITY"} onClick={onApprove}>
-              <Check className="h-4 w-4" /> {r.decision === "NEW_ACTIVITY" ? "Approve new activity" : "Approve top"} <span className="kbd bg-white/20 text-white border-white/30">A</span>
+        {dd?.question && r.status === "awaiting_planner" && <p className="mt-3 text-[13px]"><span className="muted">Question for the supervisor: </span>{dd.question}</p>}
+        {actionable && (
+          <div className="sticky bottom-0 -mx-5 mt-5 flex flex-wrap gap-2 border-t px-5 pb-1 pt-4" style={{ borderColor: "var(--border)", background: "var(--surface)" }}>
+            <button className="btn-success" disabled={busy || (!r.candidates?.length && r.decision !== "NEW_ACTIVITY")} onClick={onApprove}>
+              <Check className="h-4 w-4" /> {r.decision === "NEW_ACTIVITY" ? "Approve new activity" : "Approve match"} <span className="kbd border-white/30 bg-white/15 text-white">A</span>
             </button>
-            <button className={clsx("btn-secondary", flash === "r" && "ring-4 ring-brand-400")} disabled={busy} onClick={onReassign}>
-              <Shuffle className="h-4 w-4" /> Reassign <span className="kbd">R</span>
-            </button>
+            <button className={clsx("btn-secondary", flash === "r" && "ring-4 ring-brand-400/60")} disabled={busy} onClick={onReassign}><Shuffle className="h-4 w-4" /> Reassign <span className="kbd">R</span></button>
             <button className="btn-secondary" disabled={busy} onClick={onReject}><X className="h-4 w-4" /> Reject <span className="kbd">X</span></button>
             <button className="btn-secondary" disabled={busy} onClick={onNew}><FilePlus2 className="h-4 w-4" /> New activity <span className="kbd">N</span></button>
           </div>
         )}
       </Card>
 
-      <Card title="Top candidates (calibrated confidence)" actions={<span className="text-[11px] muted">marker = auto-apply threshold {Math.round(threshold * 100)}%</span>}>
-        {!r.candidates?.length ? <EmptyState title="No candidates" hint="Nothing in the schedule resembles this report." /> : (
+      <Card title="AI match candidates" subtitle={`Calibrated confidence · marker = auto-apply threshold ${Math.round(threshold * 100)}% · ${decisionHeadline(r.decision)}`}>
+        {!r.candidates?.length ? <EmptyState title="No candidates" hint="Nothing in the schedule resembles this update." /> : (
           <ol className="space-y-3">
             {r.candidates.slice(0, 3).map((c, i) => (
-              <li key={c.activity_id} className={clsx("rounded-lg border p-3", i === 0 ? "border-brand-300 dark:border-brand-500/40" : "border-ink-200 dark:border-ink-700")}>
-                <div className="flex flex-wrap items-start justify-between gap-2">
+              <li key={c.activity_id} className={clsx("rounded-xl border p-4 transition", i === 0 && "ring-1 ring-brand-200 dark:ring-brand-500/25")} style={{ borderColor: "var(--border)" }}>
+                <div className="flex flex-wrap items-start justify-between gap-3">
                   <div className="min-w-0">
-                    <p className="font-medium"><span className="mr-1.5 text-xs muted">#{i + 1}</span>{c.activity.name}</p>
-                    <p className="text-xs muted"><span className="font-mono">{c.activity_id}</span> · {DISC[c.activity.discipline]} · {c.activity.area} · plan {fmtDate(c.activity.planned_start)} → {fmtDate(c.activity.planned_finish)}</p>
+                    <p className="text-[13.5px] font-semibold text-ink-900 dark:text-white"><span className="mr-2 text-xs muted num">#{i + 1}</span>{c.activity.name}</p>
+                    <p className="mt-0.5 text-2xs muted"><span className="font-mono">{c.activity_id}</span> · {DISC[c.activity.discipline]} · {c.activity.area} · plan {fmtDate(c.activity.planned_start)} → {fmtDate(c.activity.planned_finish)}</p>
                   </div>
-                  {r.status.startsWith("awaiting") && (
-                    <button className="btn-secondary btn-sm" disabled={busy} onClick={() => onAssign(c.activity_id, i)}>
-                      Assign here <ChevronRight className="h-3.5 w-3.5" />
-                    </button>
-                  )}
+                  {actionable && <button className="btn-secondary btn-sm" disabled={busy} onClick={() => onAssign(c.activity_id, i)}>{i === 0 ? "Approve" : "Assign here"} <ChevronRight className="h-3.5 w-3.5" /></button>}
                 </div>
-                <div className="my-2"><ConfidenceBar value={c.confidence} threshold={threshold} /></div>
+                <div className="my-3 max-w-md"><ConfidenceIndicator value={c.confidence} threshold={threshold} /></div>
                 <ReasonChips reasons={c.reasons} />
               </li>
             ))}
@@ -312,30 +316,30 @@ function ActivityPicker({ open, onClose, onPick, report }: { open: boolean; onCl
     return () => clearTimeout(t);
   }, [q, open, report]);
   return (
-    <Modal open={open} onClose={onClose} title="Reassign to activity" wide>
+    <Modal open={open} onClose={onClose} title="Reassign to activity" description="The correction is stored and used the next time the model is retrained." wide>
       <div className="relative">
-        <Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 muted" />
-        <input autoFocus className="input pl-9" placeholder="Search by tag, name or activity ID (e.g. P-1022, F-12, cable pulling)" value={q} onChange={(e) => setQ(e.target.value)} />
+        <Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 subtle" />
+        <input autoFocus className="input pl-9" placeholder="Search by tag, name or activity ID (e.g. P-1022, F-12, cable pulling)" value={q} onChange={(e) => setQ(e.target.value)} aria-label="Search activities" />
       </div>
       {report?.candidates && !q && (
-        <div className="mt-3">
-          <p className="mb-1 text-xs font-semibold muted">Engine candidates</p>
+        <div className="mt-4">
+          <div className="label mb-2">Engine candidates</div>
           <div className="flex flex-wrap gap-1.5">
             {report.candidates.map((c) => (
-              <button key={c.activity_id} className="chip-brand cursor-pointer" onClick={() => onPick({ ...(c.activity as Activity) })}>
-                {c.activity.tag} · {PHASE[c.activity.phase] ?? c.activity.phase} ({Math.round(c.confidence * 100)}%)
+              <button key={c.activity_id} className="badge-brand h-7 cursor-pointer hover:opacity-80" onClick={() => onPick({ ...(c.activity as Activity) })}>
+                {c.activity.tag} · {PHASE[c.activity.phase] ?? c.activity.phase} · {Math.round(c.confidence * 100)}%
               </button>
             ))}
           </div>
         </div>
       )}
       <ErrorBanner error={err} />
-      <ul className="mt-3 max-h-[50vh] divide-y divide-ink-100 overflow-y-auto dark:divide-ink-800">
-        {rows === null ? <Spinner className="p-3" /> : rows.length === 0 ? <EmptyState title="No matching activities" /> : rows.map((a) => (
+      <ul className="mt-4 max-h-[50vh] divide-y overflow-y-auto" style={{ borderColor: "var(--border)" }}>
+        {rows === null ? <li className="p-3"><LoadingBlock /></li> : rows.length === 0 ? <li><EmptyState title="No matching activities" /></li> : rows.map((a) => (
           <li key={a.activity_id}>
-            <button className="w-full px-2 py-2 text-left hover:bg-ink-50 dark:hover:bg-ink-800" onClick={() => onPick(a)}>
-              <p className="text-sm font-medium">{a.name}</p>
-              <p className="text-xs muted"><span className="font-mono">{a.activity_id}</span> · {a.area} · {a.pct.toFixed(0)}% · plan {fmtDate(a.planned_start)}</p>
+            <button className="w-full rounded-lg px-2 py-2.5 text-left hover:bg-[var(--hover)]" onClick={() => onPick(a)}>
+              <p className="text-[13px] font-medium">{a.name}</p>
+              <p className="text-2xs muted"><span className="font-mono">{a.activity_id}</span> · {a.area} · {a.pct.toFixed(0)}% · plan {fmtDate(a.planned_start)}</p>
             </button>
           </li>
         ))}
@@ -345,25 +349,24 @@ function ActivityPicker({ open, onClose, onPick, report }: { open: boolean; onCl
 }
 
 function NewActivityModal({ open, onClose, report, onCreate }: { open: boolean; onClose: () => void; report: Report; onCreate: (name: string, parent: string) => void }) {
-  const prop = report.decision_detail?.proposal;
-  const topParent = report.candidates?.[0]?.activity.parent_wbs.split(".").slice(0, 4).join(".") ?? "";
   const [name, setName] = useState("");
   const [parent, setParent] = useState("");
   useEffect(() => {
-    if (open) {
-      setName((prop?.name ?? report.text).slice(0, 120));
-      setParent(prop?.parent_wbs ?? topParent);
-    }
-  }, [open, prop, report, topParent]);
+    if (!open) return;
+    const prop = report.decision_detail?.proposal;
+    setName((prop?.name ?? report.text).slice(0, 120));
+    setParent(prop?.parent_wbs ?? report.candidates?.[0]?.activity.parent_wbs.split(".").slice(0, 4).join(".") ?? "");
+    // only reset when the dialog opens for a report, not on background refreshes
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, report.id]);
   return (
-    <Modal open={open} onClose={onClose} title="Create new (unplanned) activity">
-      <form className="space-y-3" onSubmit={(e) => { e.preventDefault(); if (name.trim() && parent.trim()) onCreate(name.trim(), parent.trim()); }}>
-        <label className="block text-sm"><span className="muted">Activity name</span>
-          <input className="input mt-1" value={name} onChange={(e) => setName(e.target.value)} required maxLength={160} /></label>
-        <label className="block text-sm"><span className="muted">WBS parent (L4 work package)</span>
-          <input className="input mt-1 font-mono" value={parent} onChange={(e) => setParent(e.target.value)} required /></label>
-        <p className="text-xs muted">The report is applied to the new activity and logged; the correction teaches the model that this wording was not planned work.</p>
-        <div className="flex justify-end gap-2"><button type="button" className="btn-secondary" onClick={onClose}>Cancel</button><button className="btn-primary">Create & apply</button></div>
+    <Modal open={open} onClose={onClose} title="Create unplanned activity" description="The update is applied to the new activity and logged; the correction teaches the model this wording was not planned work.">
+      <form className="space-y-4" onSubmit={(e) => { e.preventDefault(); if (name.trim() && parent.trim()) onCreate(name.trim(), parent.trim()); }}>
+        <label className="block"><span className="label">Activity name</span>
+          <input className="input mt-1.5" value={name} onChange={(e) => setName(e.target.value)} required maxLength={160} /></label>
+        <label className="block"><span className="label">WBS parent (L4 work package)</span>
+          <input className="input mt-1.5 font-mono" value={parent} onChange={(e) => setParent(e.target.value)} required /></label>
+        <div className="flex justify-end gap-2 pt-1"><button type="button" className="btn-secondary" onClick={onClose}><ChevronLeft className="h-4 w-4" /> Cancel</button><button className="btn-primary">Create & apply</button></div>
       </form>
     </Modal>
   );

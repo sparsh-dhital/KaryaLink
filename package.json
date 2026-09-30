@@ -1,8 +1,8 @@
 {
-  "name": "sitesync",
+  "name": "karyalink",
   "version": "1.0.0",
   "private": true,
-  "description": "SiteSync - intelligent data capture & schedule-linking layer (SIH 2026, PS SIH26122, Oil India Limited)",
+  "description": "KaryaLink - Site-to-Schedule Intelligence: data capture & schedule-linking layer (SIH 2026, PS SIH26122, Oil India Limited)",
   "scripts": {
     "postinstall": "node scripts/postinstall.js",
     "setup": "node scripts/setup-python.js",

@@ -138,7 +138,7 @@ export function DemoProvider({ children, onMetaChange }: { children: ReactNode; 
   return (
     <Ctx.Provider value={{ open: () => setIntro(true), running }}>
       {children}
-      <Modal open={intro} onClose={() => setIntro(false)} title="Demo Day - scripted 3-minute scenario">
+      <Modal open={intro} onClose={() => setIntro(false)} title="Demo Day" description="A scripted ~3-minute KaryaLink scenario through the real engine and API.">
         <ol className="list-decimal space-y-1 pl-5 text-sm">
           <li>Reset the demo database and load the schedule</li>
           <li>Supervisor 1 (piping) types a formal English update → auto-applied</li>
@@ -164,8 +164,8 @@ export function DemoProvider({ children, onMetaChange }: { children: ReactNode; 
         <div className="mt-4 flex justify-end"><button className="btn-primary" onClick={() => setDone(null)}>Close</button></div>
       </Modal>
       {running && (
-        <div className="fixed inset-x-0 bottom-0 z-[55] p-3 sm:bottom-4 sm:left-1/2 sm:right-auto sm:w-[min(720px,92vw)] sm:-translate-x-1/2 sm:p-0">
-          <div className="card flex items-start gap-3 border-brand-300 px-4 py-3 shadow-lg dark:border-brand-500/40">
+        <div className="fixed inset-x-0 bottom-16 z-[55] p-3 sm:bottom-5 sm:left-1/2 sm:right-auto sm:w-[min(720px,92vw)] sm:-translate-x-1/2 sm:p-0 lg:bottom-auto lg:left-[calc(50%+128px)] lg:top-[76px]">
+          <div className="flex items-start gap-3 rounded-2xl px-4 py-3.5 shadow-glow backdrop-blur-xl animate-slideup" style={{ background: "color-mix(in srgb, var(--elevated) 92%, transparent)", border: "1px solid var(--border-strong)" }}>
             <Clapperboard className="mt-0.5 h-5 w-5 shrink-0 text-brand-600" />
             <div className="min-w-0 flex-1">
               <div className="flex items-center gap-2 text-xs font-semibold text-brand-700 dark:text-brand-300">

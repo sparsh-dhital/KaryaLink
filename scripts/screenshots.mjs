@@ -48,11 +48,11 @@ async function launch() {
   process.exit(1);
 }
 const browser = await launch();
-async function shot(name, url, { width = 1440, height = 900, dark = false, wait = 2500, action } = {}) {
+async function shot(name, url, { width = 1440, height = 900, dark = true, wait = 2500, action } = {}) {
   const ctx = await browser.newContext({ viewport: { width, height }, deviceScaleFactor: 2, colorScheme: dark ? "dark" : "light" });
   const page = await ctx.newPage();
-  await page.addInitScript((d) => localStorage.setItem("sitesync-theme", d ? "dark" : "light"), dark);
-  await page.addInitScript(() => localStorage.setItem("sitesync-voice", "off"));
+  await page.addInitScript((d) => localStorage.setItem("karyalink-theme", d ? "dark" : "light"), dark);
+  await page.addInitScript(() => localStorage.setItem("karyalink-voice", "off"));
   await page.goto(BASE + url, { waitUntil: "networkidle" });
   await page.waitForTimeout(wait);
   if (action) await action(page);
@@ -61,19 +61,23 @@ async function shot(name, url, { width = 1440, height = 900, dark = false, wait 
   await ctx.close();
 }
 
-await shot("1-supervisor-mobile.png", "/supervisor?who=civil", { width: 390, height: 844 });
-await shot("2-planner-console.png", "/planner");
-await shot("3-dashboard.png", "/");
-await shot("4-evaluation.png", "/evaluation", { wait: 3500 });
-await shot("5-audit.png", "/audit", {
-  action: async (p) => { const b = p.locator("li button[aria-expanded]").nth(1); if (await b.count()) await b.click(); await p.waitForTimeout(500); },
+// dark is KaryaLink's default theme; one light capture shows the alternate appearance
+await shot("1-dashboard.png", "/", { wait: 3000 });
+await shot("2-assistant-mobile.png", "/supervisor?who=civil", { width: 390, height: 844 });
+await shot("3-review-queue.png", "/planner");
+await shot("4-site-updates.png", "/updates?report=3");
+await shot("5-schedule.png", "/schedule");
+await shot("6-reports-ai-accuracy.png", "/evaluation", {
+  wait: 1500, action: async (p) => { await p.getByRole("tab", { name: "AI accuracy" }).click(); await p.waitForTimeout(2500); },
 });
-await shot("6-demo-day-dark.png", "/", {
-  dark: true, wait: 1500,
+await shot("7-audit-trail.png", "/audit", { wait: 3000 });
+await shot("8-dashboard-light.png", "/", { dark: false, wait: 3000 });
+await shot("9-demo-day.png", "/", {
+  wait: 1500,
   action: async (p) => {
-    await p.getByRole("button", { name: /Demo Day/ }).first().click();
+    await p.getByRole("button", { name: "Start scenario" }).click();
     await p.getByRole("button", { name: /Start Demo Day/ }).click();
-    await p.waitForTimeout(34000);
+    await p.waitForTimeout(30000);
   },
 });
 await browser.close();

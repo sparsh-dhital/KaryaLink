@@ -1,5 +1,5 @@
 import type {
-  Activity, ChatMsg, DelayFlag, GanttRow, HistoryRow, LedgerItem, Meta, Metrics, Report, Summary, Thresholds, WbsNodeT,
+  Activity, ActualEventRow, AssistantContext, ChatMsg, ReportStats, DelayFlag, GanttRow, HistoryRow, LedgerItem, Meta, Metrics, Report, Summary, Thresholds, WbsNodeT,
 } from "./types";
 
 export class ApiError extends Error {
@@ -15,7 +15,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   try {
     res = await fetch(path, init);
   } catch {
-    throw new ApiError("Cannot reach the SiteSync backend. Is `npm run dev` running?", 0);
+    throw new ApiError("Cannot reach the KaryaLink server. Is `npm run dev` running?", 0);
   }
   if (!res.ok) {
     let msg = `${res.status} ${res.statusText}`;
@@ -46,6 +46,10 @@ export const api = {
   activity: (id: string) => request<Activity & { events: unknown[] }>(`/api/activities/${encodeURIComponent(id)}`),
 
   queue: () => request<{ planner: Report[]; supervisor: Report[] }>("/api/queue"),
+  reports: (params: { q?: string; status?: string; decision?: string; channel?: string; limit?: number; offset?: number }) =>
+    request<{ total: number; items: Report[] }>(`/api/reports${q(params)}`),
+  reportStats: () => request<ReportStats>("/api/reports/stats"),
+  activityDetail: (id: string) => request<Activity & { events: ActualEventRow[] }>(`/api/activities/${encodeURIComponent(id)}`),
   report: (id: number) => request<Report>(`/api/reports/${id}`),
   submitReport: (body: { text: string; reporter?: string; reporter_discipline?: string | null; channel?: string; photo_id?: number | null }) =>
     request<Report>("/api/reports", json(body)),
@@ -70,8 +74,22 @@ export const api = {
 
   chat: (body: { session_id: string; text: string; lang: string; reporter: string; discipline?: string | null; photo_id?: number | null; channel?: string }) =>
     request<{ messages: ChatMsg[] }>("/api/assistant/message", json(body)),
-  chatAnswer: (body: { session_id: string; value: string; lang: string; reporter: string }) =>
+  chatAnswer: (body: { session_id: string; value: string; lang: string; reporter: string; label?: string }) =>
     request<{ messages: ChatMsg[] }>("/api/assistant/answer", json(body)),
+  chatUpload: (file: File, body: { session_id: string; lang: string; reporter: string; discipline?: string | null; photo_id?: number | null }) => {
+    const fd = new FormData();
+    fd.append("file", file);
+    fd.append("session_id", body.session_id);
+    fd.append("lang", body.lang);
+    fd.append("reporter", body.reporter);
+    if (body.discipline) fd.append("discipline", body.discipline);
+    if (body.photo_id) fd.append("photo_id", String(body.photo_id));
+    return request<{ messages: ChatMsg[] }>("/api/assistant/upload", { method: "POST", body: fd });
+  },
+  chatClear: (sid: string) => request<{ ok: boolean }>(`/api/assistant/history/${encodeURIComponent(sid)}`, { method: "DELETE" }),
+  chatContext: (sid: string, discipline?: string | null) =>
+    request<AssistantContext>(`/api/assistant/context/${encodeURIComponent(sid)}${q({ discipline })}`),
+  revert: (id: number, reason?: string) => request<Report>(`/api/reports/${id}/revert`, json({ actor: "Planner (R. Sharma)", reason: reason ?? "reverted by planner" })),
   endOfDay: (body: { session_id: string; lang: string; reporter: string; discipline?: string | null }) =>
     request<{ messages: ChatMsg[] }>("/api/assistant/end-of-day", json(body)),
   chatHistory: (sid: string) => request<ChatMsg[]>(`/api/assistant/history/${encodeURIComponent(sid)}`),
@@ -83,7 +101,7 @@ export const api = {
     recent: { id: number; text: string; kind: string; predicted: string | null; correct: string | null; by: string; used_in: string | null }[] }>("/api/learning/state"),
   setThresholds: (t: Thresholds) => request<{ thresholds: Thresholds }>("/api/settings/thresholds", { ...json(t), method: "PUT" }),
 
-  audit: (params: { limit?: number; offset?: number; kind?: string }) =>
+  audit: (params: { limit?: number; offset?: number; kind?: string; report_id?: number }) =>
     request<{ total: number; kinds: string[]; items: LedgerItem[] }>(`/api/audit${q(params)}`),
   verify: () => request<{ ok: boolean; entries: number; head?: string; broken_at?: number; reason?: string; checked_at: string }>("/api/audit/verify"),
 

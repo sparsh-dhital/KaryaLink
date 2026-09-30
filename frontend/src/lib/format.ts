@@ -25,7 +25,7 @@ export const DECISION_LABEL: Record<DecisionKind, string> = {
 
 export const STATUS_LABEL: Record<string, string> = {
   applied: "Applied", awaiting_planner: "Awaiting planner", awaiting_supervisor: "Awaiting supervisor",
-  rejected: "Rejected", new_activity_created: "New activity created", processing: "Processing",
+  rejected: "Rejected", new_activity_created: "New activity created", processing: "Processing", reverted: "Undone",
 };
 
 export const pct = (x: number | null | undefined, digits = 1): string =>

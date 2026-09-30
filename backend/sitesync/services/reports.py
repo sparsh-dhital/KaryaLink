@@ -250,7 +250,7 @@ def _new_activity(db: Session, r: Report, name: str | None, parent_wbs: str | No
 def planner_action(db: Session, report_id: int, action: str, activity_id: str | None = None,
                    planner: str = "planner", name: str | None = None, parent_wbs: str | None = None) -> Report:
     r = _get_report(db, report_id)
-    if r.status in ("applied", "rejected", "new_activity_created"):
+    if r.status in ("applied", "rejected", "new_activity_created", "reverted"):
         raise WorkflowError(f"Report {report_id} is already {r.status}")
     dec = r.analysis["decision"]
     for w in db.execute(select(SequenceWarning).where(SequenceWarning.report_id == r.id,
@@ -289,6 +289,62 @@ def planner_action(db: Session, report_id: int, action: str, activity_id: str | 
         r.status = "new_activity_created"
         return r
     raise WorkflowError(f"Unknown action {action}")
+
+
+def revert_report(db: Session, report_id: int, actor: str, reason: str = "undone by supervisor") -> Activity:
+    """Undo an applied report. Append-only: adds a 'revert' event restoring the previous state."""
+    r = _get_report(db, report_id)
+    if r.status not in ("applied", "new_activity_created"):
+        raise WorkflowError(f"Report {report_id} is {r.status}; only applied updates can be undone")
+    ev = db.execute(select(ActualEvent).where(ActualEvent.report_id == r.id, ActualEvent.event != "revert",
+                                              ActualEvent.reverted_by.is_(None))
+                    .order_by(ActualEvent.id.desc())).scalars().first()
+    if ev is None:
+        raise WorkflowError("Nothing to undo for this report")
+    newer = db.execute(select(ActualEvent).where(ActualEvent.activity_id == ev.activity_id, ActualEvent.id > ev.id,
+                                                 ActualEvent.event != "revert", ActualEvent.reverted_by.is_(None))).scalars().first()
+    if newer is not None:
+        raise WorkflowError("A newer update exists for this activity - ask the planner to correct it instead")
+    a = db.get(Activity, ev.activity_id)
+    prior = db.execute(select(ActualEvent).where(ActualEvent.activity_id == a.activity_id, ActualEvent.id < ev.id,
+                                                 ActualEvent.event != "revert", ActualEvent.reverted_by.is_(None))
+                       .order_by(ActualEvent.event_date, ActualEvent.id)).scalars().all()
+    before = a.pct
+    if prior:
+        last = prior[-1]
+        a.pct, a.qty_done, a.last_update = last.pct_after, last.qty_after, last.event_date
+        a.actual_start = prior[0].event_date
+        a.actual_finish = last.event_date if last.pct_after >= 100 else None
+    else:
+        a.pct, a.qty_done, a.actual_start, a.actual_finish, a.last_update = 0.0, 0.0, None, None, None
+    rev = ActualEvent(activity_id=a.activity_id, report_id=r.id, event="revert", event_date=ev.event_date,
+                      pct_before=before, pct_after=a.pct, qty_after=a.qty_done,
+                      credit_note=f"reverted event #{ev.id}: {reason}", confidence=1.0, approver=actor,
+                      model_version=r.model_version, source="live")
+    db.add(rev)
+    db.flush()
+    ev.reverted_by = rev.id
+    r.status, r.resolved_by = "reverted", actor
+    ledger.append(db, "ACTUAL_REVERTED", {"activity": {"id": a.activity_id, "name": a.name}, "reverted_event": ev.id,
+                                          "pct_before": before, "pct_after": a.pct, "reason": reason},
+                  report_id=r.id, activity_id=a.activity_id, actor=actor)
+    return a
+
+
+def supervisor_fix(db: Session, report_id: int, activity_id: str, actor: str) -> Report:
+    """Supervisor says 'no, it was X': undo the wrong link (if applied) and apply to the right activity."""
+    r = _get_report(db, report_id)
+    if db.get(Activity, activity_id) is None:
+        raise WorkflowError(f"Unknown activity {activity_id}")
+    if r.activity_id == activity_id and r.status == "applied":
+        raise WorkflowError("That update is already linked to this activity")
+    if r.status in ("applied", "new_activity_created"):
+        revert_report(db, r.id, actor, reason=f"supervisor corrected link to {activity_id}")
+    _record_correction(db, r, activity_id, "supervisor_fix", actor)
+    ledger.append(db, "SUPERVISOR_CORRECTED", {"from": r.activity_id, "to": activity_id}, report_id=r.id,
+                  activity_id=activity_id, actor=actor)
+    apply_to_activity(db, r, activity_id, approver=f"{actor} (corrected)", confidence=r.confidence)
+    return r
 
 
 def bulk_approve(db: Session, min_confidence: float, planner: str = "planner") -> list[int]:
@@ -393,3 +449,29 @@ def spreadsheet_rows_to_texts(content: bytes, filename: str) -> list[str]:
         if text.strip():
             texts.append(text)
     return texts
+
+
+SPREADSHEET_EXT = (".xlsx", ".xlsm", ".xls", ".csv")
+TEXT_EXT = (".txt", ".md", ".log")
+
+
+def ingest_file(db: Session, raw: bytes, name: str, reporter: str, reporter_discipline: str | None,
+                photo_id: int | None = None, session_id: str | None = None) -> dict:
+    """Daily-report text file or discipline spreadsheet -> one report per progress line/row."""
+    low = name.lower()
+    if low.endswith(SPREADSHEET_EXT):
+        try:
+            texts = spreadsheet_rows_to_texts(raw, name)
+        except Exception as e:  # malformed file -> clear message
+            raise WorkflowError(f"Could not read spreadsheet: {e}") from None
+        reps = [submit_report(db, t, reporter, reporter_discipline, "spreadsheet", None, photo_id,
+                              session_id=session_id, source_file=name) for t in texts]
+        ledger.append(db, "DOCUMENT_INGESTED", {"source_file": name, "rows": len(reps)}, actor=reporter)
+        return {"reports": reps, "informational_lines": []}
+    if low.endswith(TEXT_EXT):
+        out = submit_document(db, raw.decode("utf-8", errors="replace"), reporter, reporter_discipline, "file",
+                              name, None, photo_id)
+        for r in out["reports"]:
+            r.session_id = session_id
+        return out
+    raise WorkflowError("Supported report files: .txt daily report, .csv or .xlsx spreadsheet")

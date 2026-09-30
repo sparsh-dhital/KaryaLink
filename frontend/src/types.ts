@@ -53,15 +53,50 @@ export interface Report {
   source_file: string | null; resolved_by: string | null;
   candidates?: Candidate[]; decision_detail?: DecisionDetail; warnings?: SeqWarning[]; evidence_spans?: Span[];
   extraction?: Extraction; supervisor_note?: string | null;
+  activity_name?: string | null; top_candidate?: { activity_id: string; name: string; confidence: number } | null;
 }
+
+export interface ReportStats {
+  total: number; by_day: { date: string; total: number; auto: number; review: number }[];
+  by_channel: Record<string, number>; by_decision: Record<string, number>; by_status: Record<string, number>;
+}
+
+export interface ActualEventRow {
+  id: number; activity_id: string; report_id: number | null; event: string; event_date: string; qty_value: number | null;
+  qty_mode: string | null; pct_before: number; pct_after: number; credit_note: string; confidence: number; approver: string;
+  model_version: string; source: string; created_at: string;
+}
+
+export interface AreaSummary {
+  area: string; name: string; actual_pct: number; planned_pct: number; variance: number;
+  status: "complete" | "on_track" | "at_risk" | "behind"; activities: number; completed: number; in_progress: number;
+  red_flags: number; amber_flags: number; current_phase: string | null; last_update: string | null;
+}
+
+export interface ChatItem {
+  activity_id?: string | null; name: string; tag?: string; pct?: number | null; planned_start?: string; planned_finish?: string;
+  actual_start?: string | null; actual_finish?: string | null; last_update?: string | null; flag?: string | null;
+  detail?: string; updated_today?: boolean; title?: string;
+}
+
+export interface Suggestion { label: string; text: string }
 
 export interface ChatMsg {
   id: number | string; role: "user" | "assistant"; text: string; lang: string; report_id: number | null;
   payload: {
+    kind?: "update" | "question" | "status" | "list" | "help" | "why" | "memory" | "info";
     options?: Option[]; question?: boolean; decision?: DecisionKind; confidence?: number; activity_id?: string;
-    photo_id?: number | null; channel?: string; status?: string; resolved_by?: string | null; gaps?: { activity_id: string; name: string }[]; chaser_activity?: string;
+    activity_name?: string; pct?: number; photo_id?: number | null; channel?: string; status?: string;
+    gaps?: { activity_id: string; name: string }[]; chaser_activity?: string; title?: string;
+    items?: (ChatItem & { title?: string; detail?: string })[]; suggestions?: Suggestion[]; set_lang?: string;
+    reasons?: Reason[]; note?: string;
   };
   created_at?: string;
+}
+
+export interface AssistantContext {
+  data_date: string; planned_today: (ChatItem & { updated_today: boolean })[]; planned_total: number; pending_today: number;
+  delays: number; my_updates_today: number; my_applied_today: number; last_activity: ChatItem | null; pending: string | null;
 }
 
 export interface Meta {
@@ -79,6 +114,7 @@ export interface Summary {
   reports_total: number; queue_planner: number; queue_supervisor: number; auto_applied: number;
   delays_red: number; delays_amber: number; open_warnings: number;
   by_discipline: Record<string, { actual_pct: number; planned_pct: number; activities: number }>;
+  by_area: AreaSummary[]; updates_today: number; linked_today: number;
 }
 
 export interface DelayFlag {

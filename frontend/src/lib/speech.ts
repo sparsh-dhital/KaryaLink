@@ -1,5 +1,6 @@
-// Browser Web Speech API helpers (SpeechRecognition + speechSynthesis). Typed fallback shims included
-// because SpeechRecognition is not part of TypeScript's DOM lib.
+// Browser Web Speech API helpers (SpeechRecognition + speechSynthesis) with the reliability fixes
+// the Site Assistant needs: typed shims, friendly errors, sentence-chunked TTS (Chrome truncates long
+// utterances), Hinglish-aware voice choice, a speaking-state subscription and a live mic level meter.
 
 interface SRAlternative { transcript: string; confidence: number }
 interface SRResult { isFinal: boolean; length: number; [i: number]: SRAlternative }
@@ -9,12 +10,13 @@ interface SRErrorEvent { error: string }
 interface SRInstance {
   lang: string; interimResults: boolean; continuous: boolean; maxAlternatives: number;
   onresult: ((e: SREvent) => void) | null; onerror: ((e: SRErrorEvent) => void) | null;
-  onend: (() => void) | null; onstart: (() => void) | null;
+  onend: (() => void) | null; onstart: (() => void) | null; onspeechend: (() => void) | null;
   start(): void; stop(): void; abort(): void;
 }
 type SRCtor = new () => SRInstance;
 
 function ctor(): SRCtor | null {
+  if (typeof window === "undefined") return null;
   const w = window as unknown as { SpeechRecognition?: SRCtor; webkitSpeechRecognition?: SRCtor };
   return w.SpeechRecognition || w.webkitSpeechRecognition || null;
 }
@@ -25,14 +27,24 @@ export const synthesisSupported = (): boolean => typeof window !== "undefined" &
 export interface ListenHandlers {
   onInterim: (text: string) => void;
   onFinal: (text: string) => void;
-  onError: (message: string) => void;
+  onError: (message: string, code: string) => void;
   onEnd: () => void;
 }
 
-export function listen(lang: string, h: ListenHandlers): () => void {
+const ERRORS: Record<string, string> = {
+  "not-allowed": "Microphone permission was denied. Allow the mic in the address bar, or type your update.",
+  "service-not-allowed": "Speech recognition is blocked in this browser. Please type your update.",
+  "no-speech": "I didn't hear anything - tap the mic and try again.",
+  "audio-capture": "No microphone was found. Please type your update.",
+  network: "The browser's speech service is unreachable (it needs internet). Please type your update.",
+  "language-not-supported": "This browser can't recognise that language. Switch language or type instead.",
+};
+
+/** Start one recognition turn. Returns stop(). Silence ends the turn automatically. */
+export function listen(lang: string, h: ListenHandlers, { maxMs = 15000 } = {}): () => void {
   const C = ctor();
   if (!C) {
-    h.onError("Speech recognition is not supported in this browser. Please type instead.");
+    h.onError("Speech recognition is not supported in this browser (use Chrome or Edge). You can type instead.", "unsupported");
     h.onEnd();
     return () => undefined;
   }
@@ -42,39 +54,79 @@ export function listen(lang: string, h: ListenHandlers): () => void {
   rec.continuous = false;
   rec.maxAlternatives = 1;
   let finalText = "";
+  let interimText = "";
+  let ended = false;
+  const guard = setTimeout(() => { try { rec.stop(); } catch { /* noop */ } }, maxMs);
   rec.onresult = (e) => {
     let interim = "";
     for (let i = e.resultIndex; i < e.results.length; i++) {
       const r = e.results[i];
-      if (r.isFinal) finalText += r[0].transcript;
+      if (r.isFinal) finalText += r[0].transcript + " ";
       else interim += r[0].transcript;
     }
-    h.onInterim((finalText + " " + interim).trim());
+    interimText = interim;
+    h.onInterim((finalText + interim).trim());
   };
   rec.onerror = (e) => {
-    const map: Record<string, string> = {
-      "not-allowed": "Microphone permission was denied. Allow the mic or type your update.",
-      "no-speech": "No speech detected - try again, or type your update.",
-      "audio-capture": "No microphone found. Please type your update.",
-      network: "Speech service unavailable (browser speech may need internet). Please type your update.",
-    };
-    h.onError(map[e.error] || `Speech recognition error: ${e.error}`);
+    if (e.error === "aborted") return;
+    h.onError(ERRORS[e.error] || `Speech recognition error: ${e.error}`, e.error);
   };
   rec.onend = () => {
-    if (finalText.trim()) h.onFinal(finalText.trim());
+    if (ended) return;
+    ended = true;
+    clearTimeout(guard);
+    // some engines end without flagging the last chunk final - keep what the user saw
+    const text = (finalText || interimText).trim();
+    if (text) h.onFinal(text);
     h.onEnd();
   };
   try {
     rec.start();
   } catch (err) {
-    h.onError(String(err));
+    clearTimeout(guard);
+    h.onError(String(err), "start-failed");
     h.onEnd();
   }
+  return () => { try { rec.stop(); } catch { /* already stopped */ } };
+}
+
+/** Live microphone level (0..1) for the listening indicator. Returns stop(). Silently no-ops if unavailable. */
+export function micLevel(onLevel: (v: number) => void): () => void {
+  let stopped = false;
+  let raf = 0;
+  let stream: MediaStream | null = null;
+  let ctx: AudioContext | null = null;
+  const md = typeof navigator !== "undefined" ? navigator.mediaDevices : undefined;
+  if (!md?.getUserMedia) return () => undefined;
+  md.getUserMedia({ audio: true }).then((s) => {
+    if (stopped) { s.getTracks().forEach((t) => t.stop()); return; }
+    stream = s;
+    const AC = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+    ctx = new AC();
+    const an = ctx.createAnalyser();
+    an.fftSize = 512;
+    ctx.createMediaStreamSource(s).connect(an);
+    const buf = new Uint8Array(an.fftSize);
+    const tick = () => {
+      if (stopped) return;
+      an.getByteTimeDomainData(buf);
+      let sum = 0;
+      for (const b of buf) sum += ((b - 128) / 128) ** 2;
+      onLevel(Math.min(1, Math.sqrt(sum / buf.length) * 4));
+      raf = requestAnimationFrame(tick);
+    };
+    tick();
+  }).catch(() => undefined);
   return () => {
-    try { rec.stop(); } catch { /* already stopped */ }
+    stopped = true;
+    cancelAnimationFrame(raf);
+    stream?.getTracks().forEach((t) => t.stop());
+    ctx?.close().catch(() => undefined);
+    onLevel(0);
   };
 }
 
+// ------------------------------------------------------------------ text to speech
 let voicesCache: SpeechSynthesisVoice[] = [];
 function voices(): SpeechSynthesisVoice[] {
   if (!synthesisSupported()) return [];
@@ -86,37 +138,71 @@ if (synthesisSupported()) {
   window.speechSynthesis.onvoiceschanged = () => { voices(); };
 }
 
-export function pickVoice(lang: string): SpeechSynthesisVoice | undefined {
+const hasDevanagari = (t: string) => /[ऀ-ॿ]/.test(t);
+
+/** Devanagari -> Hindi voice. Romanised Hinglish reads far better with an Indian-English voice. */
+export function pickVoice(lang: string, text = ""): SpeechSynthesisVoice | undefined {
   const vs = voices();
-  const base = lang.slice(0, 2).toLowerCase();
-  return vs.find((v) => v.lang.toLowerCase() === lang.toLowerCase())
-    || vs.find((v) => v.lang.toLowerCase().startsWith(base))
-    || vs.find((v) => v.lang.toLowerCase() === "en-in")
-    || vs.find((v) => v.lang.toLowerCase().startsWith("en"));
+  const by = (pred: (v: SpeechSynthesisVoice) => boolean) => vs.find(pred);
+  const lc = (v: SpeechSynthesisVoice) => v.lang.toLowerCase().replace("_", "-");
+  if (hasDevanagari(text)) return by((v) => lc(v).startsWith("hi")) || by((v) => lc(v) === "en-in");
+  if (lang.toLowerCase().startsWith("hi")) return by((v) => lc(v) === "en-in") || by((v) => lc(v).startsWith("hi")) || by((v) => lc(v).startsWith("en"));
+  return by((v) => lc(v) === lang.toLowerCase()) || by((v) => lc(v) === "en-in") || by((v) => lc(v).startsWith("en"));
 }
 
-/** Speak text; resolves when finished (or after a safety timeout). */
-export function speak(text: string, lang: string, maxMs = 12000): Promise<void> {
-  return new Promise((resolve) => {
-    if (!synthesisSupported() || !text) return resolve();
-    try {
-      window.speechSynthesis.cancel();
-      const u = new SpeechSynthesisUtterance(text);
-      const v = pickVoice(lang);
-      if (v) u.voice = v;
-      u.lang = v?.lang || lang;
-      u.rate = 1.02;
-      const done = () => { clearTimeout(t); resolve(); };
-      const t = setTimeout(done, Math.min(maxMs, 1500 + text.length * 75));
-      u.onend = done;
-      u.onerror = done;
-      window.speechSynthesis.speak(u);
-    } catch {
-      resolve();
+type SpeakListener = (speaking: boolean) => void;
+const speakListeners = new Set<SpeakListener>();
+let speaking = false;
+let speakToken = 0;
+function setSpeaking(v: boolean) {
+  if (speaking === v) return;
+  speaking = v;
+  speakListeners.forEach((l) => l(v));
+}
+export function onSpeakingChange(l: SpeakListener): () => void {
+  speakListeners.add(l);
+  return () => { speakListeners.delete(l); };
+}
+
+function chunks(text: string): string[] {
+  const parts = text.replace(/\s+/g, " ").match(/[^.!?।]+[.!?।]*\s*/g) || [text];
+  const out: string[] = [];
+  for (const p of parts) {
+    if (out.length && (out[out.length - 1] + p).length < 180) out[out.length - 1] += p;
+    else out.push(p);
+  }
+  return out.map((s) => s.trim()).filter(Boolean);
+}
+
+/** Speak text; resolves when finished, interrupted, or after a safety timeout. */
+export async function speak(text: string, lang: string): Promise<void> {
+  if (!synthesisSupported() || !text.trim()) return;
+  const token = ++speakToken;
+  window.speechSynthesis.cancel();
+  setSpeaking(true);
+  const voice = pickVoice(lang, text);
+  try {
+    for (const part of chunks(text)) {
+      if (token !== speakToken) return;
+      await new Promise<void>((resolve) => {
+        const u = new SpeechSynthesisUtterance(part);
+        if (voice) u.voice = voice;
+        u.lang = voice?.lang || lang;
+        u.rate = 1.03;
+        const done = () => { clearTimeout(t); resolve(); };
+        const t = setTimeout(done, 1200 + part.length * 80);
+        u.onend = done;
+        u.onerror = done;
+        window.speechSynthesis.speak(u);
+      });
     }
-  });
+  } finally {
+    if (token === speakToken) setSpeaking(false);
+  }
 }
 
 export function stopSpeaking(): void {
+  speakToken++;
   if (synthesisSupported()) window.speechSynthesis.cancel();
+  setSpeaking(false);
 }

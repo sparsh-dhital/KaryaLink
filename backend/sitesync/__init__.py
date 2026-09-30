@@ -1,3 +1,3 @@
-"""SiteSync - Intelligent data capture & schedule-linking layer (SIH26122 prototype)."""
+"""KaryaLink (package: sitesync) - Site-to-Schedule Intelligence. Intelligent data capture & schedule-linking layer (SIH26122 prototype)."""
 
 __version__ = "1.0.0"

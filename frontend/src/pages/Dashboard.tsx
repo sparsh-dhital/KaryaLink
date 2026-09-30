@@ -1,250 +1,211 @@
 import clsx from "clsx";
-import { AlertTriangle, BookOpen, ChevronDown, ChevronRight, Download, FileUp, Loader2, Search, ShieldAlert } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
-import { Link } from "react-router-dom";
+import { AlertTriangle, ArrowRight, ClipboardCheck, Inbox, Link2, ShieldAlert, Sparkles, TrendingDown, Activity as ActivityIcon, CheckCircle2 } from "lucide-react";
+import { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { api } from "../api";
-import { DisciplineBars, Gantt, SCurve } from "../components/charts";
-import { Card, EmptyState, ErrorBanner, Kpi, Spinner, SyntheticLabel, useAsync, useToast } from "../components/ui";
+import { DisciplineBars, SCurve } from "../components/charts";
+import { SectionLink, UnitCard, UpdateItem } from "../components/domain";
+import { Card, EmptyState, ErrorBanner, LoadingBlock, PageHeader, Skeleton, Stat, SyntheticLabel, useAsync } from "../components/ui";
 import { dataBus } from "../lib/demo";
 import { DISC, DISC_COLOR, DISC_ORDER, fmtDate } from "../lib/format";
-import type { Meta, WbsNodeT } from "../types";
+import { PAGE } from "../lib/layout";
+import type { Meta } from "../types";
+
+function greeting(): string {
+  const h = new Date().getHours();
+  return h < 12 ? "Good morning" : h < 17 ? "Good afternoon" : "Good evening";
+}
 
 export default function Dashboard({ meta }: { meta: Meta | null }) {
   const [disc, setDisc] = useState<string>("");
+  const nav = useNavigate();
   const summary = useAsync(() => api.summary(), []);
   const scurve = useAsync(() => api.scurve(disc || undefined), [disc]);
-  const gantt = useAsync(() => api.gantt(disc || undefined), [disc]);
-  const delays = useAsync(() => api.delays(disc || undefined), [disc]);
+  const feed = useAsync(() => api.reports({ limit: 6 }), []);
+  const delays = useAsync(() => api.delays(), []);
   const warnings = useAsync(() => api.warnings(), []);
-  const wbs = useAsync(() => api.wbs(disc || undefined), [disc]);
-  useEffect(() => dataBus.on(() => { summary.reload(); scurve.reload(); gantt.reload(); delays.reload(); warnings.reload(); wbs.reload(); }),
-    [summary.reload, scurve.reload, gantt.reload, delays.reload, warnings.reload, wbs.reload]);
+  useEffect(() => dataBus.on(() => { summary.reload(); scurve.reload(); feed.reload(); delays.reload(); warnings.reload(); }),
+    [summary.reload, scurve.reload, feed.reload, delays.reload, warnings.reload]);
   const s = summary.data;
   const today = s?.data_date ?? meta?.data_date ?? "";
+  const th = meta?.thresholds.auto_apply ?? 0.8;
   const openWarn = (warnings.data ?? []).filter((w) => w.status === "open");
+  const gap = s ? s.actual_pct - s.planned_pct : 0;
+  const exceptions = s ? s.delays_red + s.open_warnings : 0;
 
   return (
-    <div className="mx-auto max-w-7xl space-y-4 p-3 sm:p-5">
-      <div className="flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <h1 className="text-xl font-semibold">{s?.project ?? "Project dashboard"}</h1>
-          <p className="text-sm muted">Data date {fmtDate(today)} · actuals update in near real time as reports are linked · <SyntheticLabel text="synthetic project data" /></p>
-        </div>
-        <DataPanel onChanged={() => dataBus.emit()} />
-      </div>
+    <div className={PAGE}>
+      <PageHeader eyebrow={<>GGS-7 Gas Gathering Station · data date {fmtDate(today)}</>}
+        title={`${greeting()}, R. Sharma`}
+        badge={<SyntheticLabel text="synthetic project data" />}
+        description={s ? <>Project intelligence at a glance: <b className="text-ink-800 dark:text-ink-100">{s.updates_today}</b> site updates today, <b className="text-ink-800 dark:text-ink-100">{s.linked_today}</b> linked to the schedule automatically, <b className="text-ink-800 dark:text-ink-100">{s.queue_planner + s.queue_supervisor}</b> waiting for a person.</> : "Loading project intelligence…"}
+        actions={<>
+          <button className="btn-secondary" onClick={() => nav("/updates")}><Inbox className="h-4 w-4" /> Site updates</button>
+          <button className="btn-primary" onClick={() => nav("/planner")}><ClipboardCheck className="h-4 w-4" /> Review queue{s ? ` (${s.queue_planner + s.queue_supervisor})` : ""}</button>
+        </>} />
       <ErrorBanner error={summary.error} onRetry={summary.reload} />
 
       {/* KPIs */}
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-6">
-        <Kpi label="Actual progress" value={s ? `${s.actual_pct.toFixed(1)}%` : "…"} sub={s ? `plan ${s.planned_pct.toFixed(1)}%` : ""} tone="brand" />
-        <Kpi label="Schedule performance (SPI)" value={s?.spi?.toFixed(2) ?? "…"} sub="earned ÷ planned" tone={s && s.spi !== null && s.spi < 0.9 ? "bad" : "default"} />
-        <Kpi label="Activities" value={s ? `${s.completed}/${s.activities}` : "…"} sub={s ? `${s.in_progress} in progress · ${s.new_activities} new` : ""} />
-        <Kpi label="Delay flags" value={s ? <span><span className="text-rose-600 dark:text-rose-400">{s.delays_red}</span> <span className="text-base text-amber-600 dark:text-amber-400">+{s.delays_amber}</span></span> : "…"} sub="red + amber" />
-        <Kpi label="Sequence warnings" value={s?.open_warnings ?? "…"} sub="open, awaiting confirmation" tone={s && s.open_warnings > 0 ? "warn" : "default"} />
-        <Kpi label="Review queue" value={s ? s.queue_planner + s.queue_supervisor : "…"} sub={<Link className="text-brand-600 hover:underline dark:text-brand-400" to="/planner">open planner console →</Link>} />
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
+        {!s ? Array.from({ length: 6 }).map((_, i) => <div key={i} className="card p-4"><Skeleton className="h-3 w-20" /><Skeleton className="mt-3 h-7 w-16" /><Skeleton className="mt-2 h-3 w-24" /></div>) : <>
+          <Stat label="Actual progress" value={`${s.actual_pct.toFixed(1)}%`} icon={<ActivityIcon className="h-4 w-4" />}
+            trend={<span className={clsx("text-xs font-semibold num", gap < -5 ? "text-rose-500" : "text-emerald-500")}>{gap >= 0 ? "+" : ""}{gap.toFixed(1)}</span>}
+            sub={`plan ${s.planned_pct.toFixed(1)}% · SPI ${s.spi?.toFixed(2) ?? "-"}`} />
+          <Stat label="Updates today" value={s.updates_today} icon={<Inbox className="h-4 w-4" />} sub={`${s.linked_today} auto-linked`} />
+          <Stat label="Pending reviews" value={s.queue_planner + s.queue_supervisor} tone={s.queue_planner ? "warn" : "default"} icon={<ClipboardCheck className="h-4 w-4" />}
+            sub={`${s.queue_supervisor} awaiting supervisor`} />
+          <Stat label="Schedule-linked updates" value={s.auto_applied} icon={<Link2 className="h-4 w-4" />} sub={`of ${s.reports_total} reports received`} />
+          <Stat label="Exceptions" value={exceptions} tone={exceptions ? "bad" : "good"} icon={<ShieldAlert className="h-4 w-4" />}
+            sub={`${s.delays_red} delays · ${s.open_warnings} sequence`} />
+          <Stat label="Activities complete" value={`${s.completed}`} icon={<CheckCircle2 className="h-4 w-4" />}
+            sub={`of ${s.activities} · ${s.in_progress} in progress`} />
+        </>}
       </div>
 
-      {/* filters: one row above the charts */}
-      <div className="flex flex-wrap items-center gap-1.5" role="group" aria-label="Discipline filter">
-        <span className="mr-1 text-xs font-semibold muted">Discipline</span>
-        {["", ...DISC_ORDER].map((d) => (
-          <button key={d || "all"} onClick={() => setDisc(d)}
-            className={clsx("rounded-full border px-3 py-1 text-xs font-medium transition", disc === d
-              ? "border-brand-600 bg-brand-600 text-white" : "border-ink-200 bg-white hover:bg-ink-50 dark:border-ink-700 dark:bg-ink-900 dark:hover:bg-ink-800")}>
-            {d && <span className="mr-1.5 inline-block h-2 w-2 rounded-sm align-middle" style={{ background: DISC_COLOR[d] }} />}
-            {d ? DISC[d] : "All"}
-          </button>
-        ))}
-      </div>
-
-      <div className="grid gap-4 lg:grid-cols-3">
-        <Card title={`S-curve: planned vs actual${disc ? ` · ${DISC[disc]}` : ""}`} className="lg:col-span-2">
-          {scurve.loading && !scurve.data ? <Spinner /> : scurve.error ? <ErrorBanner error={scurve.error} /> :
-            scurve.data?.length ? <SCurve data={scurve.data} today={today} /> : <EmptyState title="No schedule data" />}
-        </Card>
-        <Card title="Progress by discipline (weighted by rules of credit)">
-          {s ? <DisciplineBars data={s.by_discipline} onPick={(d) => setDisc(disc === d ? "" : d)} active={disc} /> : <Spinner />}
-        </Card>
-      </div>
-
-      <div className="grid gap-4 lg:grid-cols-2">
-        <Card title={<span className="flex items-center gap-2"><AlertTriangle className="h-4 w-4 text-amber-500" /> Early delay flags</span>}
-          actions={meta && <span className="text-[11px] muted">due ≤{meta.delay_rules.due_window_days} d or overdue · silent ≥{meta.delay_rules.amber_days} d amber, ≥{meta.delay_rules.red_days} d red</span>} pad={false}>
-          {delays.loading && !delays.data ? <Spinner className="p-4" /> : !delays.data?.length ? <EmptyState title="No delay flags" hint="Every activity due soon has a recent update." /> : (
-            <div className="scrollbar-thin max-h-80 overflow-y-auto">
-              <table className="w-full text-sm">
-                <thead className="table-head sticky top-0"><tr><th className="px-3 py-2">Activity</th><th className="px-2 py-2">Due</th><th className="px-2 py-2 text-right">%</th><th className="px-3 py-2">Why</th></tr></thead>
-                <tbody className="divide-y divide-ink-100 dark:divide-ink-800">
-                  {delays.data.slice(0, 40).map((d) => (
-                    <tr key={d.activity_id}>
-                      <td className="px-3 py-2">
-                        <span className={clsx("mr-1.5 inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-bold uppercase",
-                          d.level === "red" ? "bg-rose-100 text-rose-700 dark:bg-rose-500/15 dark:text-rose-300" : "bg-amber-100 text-amber-800 dark:bg-amber-500/15 dark:text-amber-300")}>
-                          {d.level === "red" ? "▲ red" : "● amber"}</span>
-                        <span className="font-medium">{d.name}</span>
-                        <div className="text-[11px] muted">{d.activity_id} · last update {d.last_update ? fmtDate(d.last_update) : "never"}</div>
-                      </td>
-                      <td className="whitespace-nowrap px-2 py-2 text-xs">{fmtDate(d.planned_finish)}</td>
-                      <td className="px-2 py-2 text-right tabular-nums">{d.pct.toFixed(0)}</td>
-                      <td className="px-3 py-2 text-xs muted">{d.reasons.join("; ")}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+      {/* planned vs actual + assistant */}
+      <div className="mt-4 grid gap-4 xl:grid-cols-3">
+        <Card className="xl:col-span-2" title="Planned vs actual progress" subtitle={`Earned progress (rules of credit) against the baseline${disc ? ` · ${DISC[disc]}` : " · all disciplines"}`}
+          actions={
+            <div className="flex max-w-full gap-1 overflow-x-auto" role="group" aria-label="Discipline filter">
+              {["", ...DISC_ORDER].map((d) => (
+                <button key={d || "all"} onClick={() => setDisc(d)} aria-pressed={disc === d}
+                  className={clsx("inline-flex h-7 shrink-0 items-center gap-1.5 rounded-md px-2.5 text-xs font-medium transition",
+                    disc === d ? "bg-ink-900 text-white dark:bg-white dark:text-ink-950" : "text-ink-500 hover:bg-[var(--hover)] hover:text-ink-800 dark:hover:text-ink-100")}>
+                  {d && <span className="h-1.5 w-1.5 rounded-full" style={{ background: DISC_COLOR[d] }} />}
+                  {d || "All"}
+                </button>
+              ))}
+            </div>
+          }>
+          {scurve.loading && !scurve.data ? <Skeleton className="h-[280px]" /> : scurve.error ? <ErrorBanner error={scurve.error} onRetry={scurve.reload} /> :
+            scurve.data?.length ? <SCurve data={scurve.data} today={today} /> : <EmptyState title="No schedule data" hint="Import a schedule from Settings." />}
+          {s && (
+            <div className="mt-3 flex flex-wrap items-center gap-x-6 gap-y-2 border-t pt-3 text-xs" style={{ borderColor: "var(--border)" }}>
+              <Legend color="var(--series-1)" label="Actual (earned)" value={`${s.actual_pct.toFixed(1)}%`} />
+              <Legend color="var(--chart-muted)" dashed label="Planned" value={`${s.planned_pct.toFixed(1)}%`} />
+              <span className={clsx("inline-flex items-center gap-1.5 font-medium", gap < -5 ? "text-rose-600 dark:text-rose-400" : "text-emerald-600 dark:text-emerald-400")}>
+                <TrendingDown className="h-3.5 w-3.5" /> {Math.abs(gap).toFixed(1)} pts {gap < 0 ? "behind" : "ahead of"} plan
+              </span>
             </div>
           )}
         </Card>
-        <Card title={<span className="flex items-center gap-2"><ShieldAlert className="h-4 w-4 text-amber-500" /> Sequence-sanity warnings</span>} pad={false}>
-          {warnings.loading && !warnings.data ? <Spinner className="p-4" /> : !warnings.data?.length ? <EmptyState title="No sequence warnings" hint="Out-of-order reports (e.g. hydrotest before welding is complete) appear here." /> : (
-            <ul className="scrollbar-thin max-h-80 divide-y divide-ink-100 overflow-y-auto dark:divide-ink-800">
-              {warnings.data.slice(0, 40).map((w) => (
-                <li key={w.id} className="px-4 py-2.5 text-sm">
-                  <div className="flex items-center justify-between gap-2">
-                    <span className={w.status === "open" ? "chip-warn" : w.status === "confirmed" ? "chip-pos" : "chip-neg"}>{w.status}</span>
-                    <span className="text-[11px] muted">report #{w.report_id}{w.resolved_by ? ` · by ${w.resolved_by}` : ""}</span>
-                  </div>
-                  <p className="mt-1">{w.message}</p>
+        <AssistantCard />
+      </div>
+
+      {/* unit portfolio */}
+      <section className="mt-6">
+        <div className="mb-3 flex items-end justify-between gap-3">
+          <div>
+            <h2 className="text-[15px] font-semibold text-ink-900 dark:text-white">Unit portfolio</h2>
+            <p className="text-xs muted">Six process units of GGS-7 · actual vs planned today · click a unit to open its schedule</p>
+          </div>
+          <SectionLink to="/schedule">Open schedule</SectionLink>
+        </div>
+        <div className="-mx-4 flex gap-3 overflow-x-auto px-4 pb-1 sm:mx-0 sm:grid sm:grid-cols-2 sm:overflow-visible sm:px-0 xl:grid-cols-3">
+          {!s ? Array.from({ length: 3 }).map((_, i) => <div key={i} className="card min-w-[250px] p-4"><LoadingBlock rows={4} /></div>)
+            : s.by_area.map((u) => <UnitCard key={u.area} u={u} onOpen={() => nav(`/schedule?area=${u.area}`)} />)}
+        </div>
+      </section>
+
+      {/* recent updates + disciplines */}
+      <div className="mt-6 grid gap-4 xl:grid-cols-3">
+        <Card className="xl:col-span-2" title="Recent site updates" subtitle="What supervisors reported, where KaryaLink linked it, and how sure it was" pad={false}
+          actions={<SectionLink to="/updates">All updates</SectionLink>}>
+          <div className="px-2 pb-2">
+            {feed.loading && !feed.data ? <div className="p-3"><LoadingBlock rows={6} /></div> : !feed.data?.items.length ? (
+              <EmptyState icon={<Inbox className="h-5 w-5" />} title="No site updates yet" hint="Once supervisors submit progress, KaryaLink analyses it and links it to the schedule." />
+            ) : (
+              <ul className="divide-y" style={{ borderColor: "var(--border)" }}>
+                {feed.data.items.map((r) => <li key={r.id}><UpdateItem r={r} threshold={th} onClick={() => nav(`/updates?report=${r.id}`)} /></li>)}
+              </ul>
+            )}
+          </div>
+        </Card>
+        <Card title="Progress by discipline" subtitle="Weighted by rules of credit · marker = planned today">
+          {s ? <DisciplineBars data={s.by_discipline} onPick={(d) => setDisc(disc === d ? "" : d)} active={disc} /> : <LoadingBlock rows={6} />}
+        </Card>
+      </div>
+
+      {/* exceptions */}
+      <div className="mt-4 grid gap-4 lg:grid-cols-2">
+        <Card title={<span className="inline-flex items-center gap-2"><AlertTriangle className="h-4 w-4 text-amber-500" />Early delay flags</span>}
+          subtitle={meta ? `Due within ${meta.delay_rules.due_window_days} d or overdue, silent ≥${meta.delay_rules.amber_days} d (amber) / ≥${meta.delay_rules.red_days} d (red)` : undefined}
+          actions={<SectionLink to="/schedule?view=delays">View all</SectionLink>} pad={false}>
+          {delays.loading && !delays.data ? <div className="px-5 pb-5"><LoadingBlock /></div> : !delays.data?.length ? <EmptyState title="No delay flags" hint="Every activity due soon has a recent update." /> : (
+            <ul className="divide-y px-2 pb-2" style={{ borderColor: "var(--border)" }}>
+              {delays.data.slice(0, 5).map((d) => (
+                <li key={d.activity_id}>
+                  <button onClick={() => nav(`/schedule?activity=${encodeURIComponent(d.activity_id)}`)} className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left hover:bg-[var(--hover)]">
+                    <span className={clsx("h-8 w-1 shrink-0 rounded-full", d.level === "red" ? "bg-rose-500" : "bg-amber-500")} />
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-[13px] font-medium">{d.name}</span>
+                      <span className="block truncate text-2xs muted">{d.reasons.join(" · ")}</span>
+                    </span>
+                    <span className="text-right text-2xs muted"><span className="block text-xs font-semibold text-ink-800 num dark:text-ink-100">{d.pct.toFixed(0)}%</span>due {fmtDate(d.planned_finish)}</span>
+                  </button>
                 </li>
               ))}
             </ul>
           )}
-          {openWarn.length > 0 && <p className="border-t border-ink-100 px-4 py-2 text-xs muted dark:border-ink-800">{openWarn.length} open - supervisors confirm in the assistant; planners resolve in the console.</p>}
         </Card>
-      </div>
-
-      <Card title={`Plan vs actual (activities active around the data date${disc ? ` · ${DISC[disc]}` : ""})`}>
-        {gantt.loading && !gantt.data ? <Spinner /> : gantt.data?.length ? <Gantt rows={gantt.data} today={today} /> : <EmptyState title="No activities in the window" />}
-      </Card>
-
-      <div className="grid gap-4 lg:grid-cols-2">
-        <Card title="WBS roll-up (L1 → L6)" pad={false}>
-          {wbs.loading && !wbs.data ? <Spinner className="p-4" /> : (
-            <div className="scrollbar-thin max-h-[28rem] overflow-y-auto p-2">
-              {wbs.data?.roots.map((n) => <WbsNode key={n.code} n={n} depth={0} defaultOpen />)}
-            </div>
+        <Card title={<span className="inline-flex items-center gap-2"><ShieldAlert className="h-4 w-4 text-rose-500" />Sequence exceptions</span>}
+          subtitle="Updates reported out of logic order - confirmed by the supervisor or resolved by a planner" pad={false}
+          actions={<SectionLink to="/schedule?view=warnings">View all</SectionLink>}>
+          {warnings.loading && !warnings.data ? <div className="px-5 pb-5"><LoadingBlock /></div> : !warnings.data?.length ? <EmptyState title="No sequence exceptions" hint="Out-of-order reports, e.g. hydrotest before welding is complete, appear here." /> : (
+            <ul className="divide-y px-2 pb-2" style={{ borderColor: "var(--border)" }}>
+              {warnings.data.slice(0, 5).map((w) => (
+                <li key={w.id} className="flex items-start gap-3 px-3 py-2.5">
+                  <span className={w.status === "open" ? "badge-warning" : w.status === "confirmed" ? "badge-success" : "badge-danger"}>{w.status}</span>
+                  <span className="min-w-0 flex-1 text-[13px] leading-5">{w.message}<span className="block text-2xs muted">Report #{w.report_id}{w.resolved_by ? ` · resolved by ${w.resolved_by}` : ""}</span></span>
+                </li>
+              ))}
+            </ul>
           )}
+          {openWarn.length > 0 && <p className="border-t px-5 py-2.5 text-2xs muted" style={{ borderColor: "var(--border)" }}>{openWarn.length} open · supervisors confirm in the assistant, planners resolve in the review queue</p>}
         </Card>
-        <MemoryBox />
       </div>
     </div>
   );
 }
 
-function PctBar({ actual, planned }: { actual: number; planned: number }) {
+function Legend({ color, label, value, dashed }: { color: string; label: string; value: string; dashed?: boolean }) {
   return (
-    <div className="relative h-1.5 w-24 shrink-0 rounded bg-ink-100 dark:bg-ink-800" title={`actual ${actual}% · planned ${planned}%`}>
-      <div className="h-full rounded bg-brand-500" style={{ width: `${actual}%` }} />
-      <div className="absolute -top-0.5 h-2.5 w-0.5 bg-ink-800 dark:bg-white" style={{ left: `${planned}%` }} />
-    </div>
+    <span className="inline-flex items-center gap-2">
+      <span className={clsx("inline-block h-0 w-5", dashed ? "border-t-2 border-dashed" : "border-t-[2.5px]")} style={{ borderColor: color }} />
+      <span className="muted">{label}</span> <b className="num text-ink-900 dark:text-white">{value}</b>
+    </span>
   );
 }
 
-function WbsNode({ n, depth, defaultOpen }: { n: WbsNodeT; depth: number; defaultOpen?: boolean }) {
-  const [open, setOpen] = useState(!!defaultOpen);
-  const hasKids = n.children.length > 0 || n.activities.length > 0;
+function AssistantCard() {
+  const [q, setQ] = useState("");
+  const nav = useNavigate();
+  const ask = (t: string) => { if (t.trim()) nav(`/supervisor?ask=${encodeURIComponent(t.trim())}`); };
+  const ex = ["What is delayed?", "Status of line 1022?", "What is planned today?"];
   return (
-    <div>
-      <button onClick={() => setOpen((o) => !o)} className="flex w-full items-center gap-2 rounded px-1.5 py-1 text-left text-sm hover:bg-ink-50 dark:hover:bg-ink-800"
-        style={{ paddingLeft: 6 + depth * 14 }} aria-expanded={open}>
-        {hasKids ? (open ? <ChevronDown className="h-3.5 w-3.5 shrink-0 muted" /> : <ChevronRight className="h-3.5 w-3.5 shrink-0 muted" />) : <span className="w-3.5" />}
-        <span className="shrink-0 rounded bg-ink-100 px-1 text-[10px] font-semibold text-ink-600 dark:bg-ink-800 dark:text-ink-300">L{n.level}</span>
-        <span className="min-w-0 flex-1 truncate">{n.name}</span>
-        <span className="w-12 text-right text-xs font-semibold tabular-nums">{n.actual_pct.toFixed(0)}%</span>
-        <PctBar actual={n.actual_pct} planned={n.planned_pct} />
-      </button>
-      {open && (
-        <div>
-          {n.children.map((c) => <WbsNode key={c.code} n={c} depth={depth + 1} />)}
-          {n.activities.map((a) => (
-            <div key={a.activity_id} className="flex items-center gap-2 px-1.5 py-0.5 text-xs" style={{ paddingLeft: 6 + (depth + 1) * 14 + 18 }}>
-              <span className="shrink-0 rounded bg-brand-50 px-1 text-[10px] font-semibold text-brand-700 dark:bg-brand-500/10 dark:text-brand-300">L{a.level}</span>
-              <span className="min-w-0 flex-1 truncate" title={a.activity_id}>
-                {a.flag && <span className={a.flag === "red" ? "text-rose-600" : "text-amber-500"}>{a.flag === "red" ? "▲ " : "● "}</span>}{a.name}
-              </span>
-              <span className="w-12 text-right tabular-nums">{a.pct.toFixed(0)}%</span>
-              <PctBar actual={a.pct} planned={a.planned_pct} />
-            </div>
-          ))}
+    <section className="card glow relative flex flex-col overflow-hidden p-5">
+      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(120%_80%_at_100%_0%,rgba(117,101,243,.20),transparent_60%)]" />
+      <div className="relative flex items-center justify-between">
+        <span className="inline-flex items-center gap-2 text-[13.5px] font-semibold"><Sparkles className="h-4 w-4 text-brand-500" /> AI Site Assistant</span>
+        <span className="badge-brand">voice · EN / हिंदी</span>
+      </div>
+      <h3 className="relative mt-5 text-xl font-semibold leading-7 tracking-tight text-ink-900 dark:text-white">Ask, don't guess.</h3>
+      <p className="relative mt-1.5 text-[13px] leading-5 muted">Supervisors speak or type progress in English, Hindi or Hinglish. Confident links update the schedule; uncertain ones get one clarifying question.</p>
+      <div className="relative mt-4 flex flex-wrap gap-1.5">
+        {ex.map((e) => <button key={e} onClick={() => ask(e)} className="rounded-full border px-2.5 py-1 text-2xs font-medium text-ink-600 transition hover:border-brand-300 hover:text-brand-700 dark:text-ink-300 dark:hover:border-brand-500/40 dark:hover:text-brand-200" style={{ borderColor: "var(--border-strong)" }}>{e}</button>)}
+      </div>
+      <ul className="relative mt-5 space-y-2 border-t pt-4 text-xs" style={{ borderColor: "var(--border)" }}>
+        {[["Report", "“F-12 pour done, 42 cum” · voice or chat"], ["Ask", "status of a tag, today's plan, delays"], ["Correct", "“undo” · “no, it was line 1022” · “why?”"], ["Evidence", "photo with GPS · daily report files"]].map(([k, v]) => (
+          <li key={k} className="flex gap-3"><span className="w-16 shrink-0 font-semibold text-ink-700 dark:text-ink-200">{k}</span><span className="muted">{v}</span></li>
+        ))}
+      </ul>
+      <form className="relative mt-auto pt-5" onSubmit={(e) => { e.preventDefault(); ask(q); }}>
+        <div className="flex items-center gap-2 rounded-xl border px-2 py-1.5 transition focus-within:border-brand-400 focus-within:shadow-ring" style={{ background: "var(--surface-2)", borderColor: "var(--border-strong)" }}>
+          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Ask about progress or report an update…" aria-label="Ask the assistant"
+            className="h-8 flex-1 bg-transparent px-1.5 text-[13px] placeholder:text-ink-400 focus:outline-none" />
+          <button className="flex h-8 w-8 items-center justify-center rounded-lg bg-brand-600 text-white transition hover:bg-brand-500 disabled:opacity-50" disabled={!q.trim()} aria-label="Ask"><ArrowRight className="h-4 w-4" /></button>
         </div>
-      )}
-    </div>
-  );
-}
-
-function MemoryBox() {
-  const [q, setQ] = useState("typical duration for piping erection");
-  const [busy, setBusy] = useState(false);
-  const [res, setRes] = useState<Awaited<ReturnType<typeof api.ask>> | null>(null);
-  const [err, setErr] = useState<unknown>(null);
-  const ask = async (question: string) => {
-    setBusy(true);
-    setErr(null);
-    try { setRes(await api.ask(question)); } catch (e) { setErr(e); } finally { setBusy(false); }
-  };
-  const examples = ["typical duration for piping erection", "average slip for civil concrete pour", "productivity of cable pulling",
-    "which activities in U-300 slipped most", "how many welding activities are complete"];
-  return (
-    <Card title={<span className="flex items-center gap-2"><BookOpen className="h-4 w-4 text-brand-500" /> Institutional memory</span>} actions={<SyntheticLabel text="synthetic-data demo" />}>
-      <form className="flex gap-2" onSubmit={(e) => { e.preventDefault(); void ask(q); }}>
-        <div className="relative flex-1">
-          <Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 muted" />
-          <input className="input pl-9" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Ask about historical actuals…" maxLength={300} aria-label="Question" />
-        </div>
-        <button className="btn-primary" disabled={busy || !q.trim()}>{busy ? <Loader2 className="h-4 w-4 animate-spin" /> : "Ask"}</button>
       </form>
-      <div className="mt-2 flex flex-wrap gap-1.5">
-        {examples.map((e) => <button key={e} className="chip-neu cursor-pointer hover:opacity-80" onClick={() => { setQ(e); void ask(e); }}>{e}</button>)}
-      </div>
-      <ErrorBanner error={err} />
-      {res && (
-        <div className="mt-3 rounded-lg bg-ink-50 p-3 text-sm dark:bg-ink-800/60">
-          <p>{res.answer}</p>
-          {res.histogram && res.histogram.length > 0 && (
-            <div className="mt-3 flex h-20 items-end gap-1" aria-label="Duration histogram">
-              {res.histogram.map((h) => {
-                const max = Math.max(...res.histogram!.map((x) => x.count), 1);
-                return (
-                  <div key={h.bin} className="flex flex-1 flex-col items-center gap-1" title={`${h.bin}: ${h.count}`}>
-                    <span className="text-[10px] tabular-nums muted">{h.count || ""}</span>
-                    <div className="w-full rounded-t" style={{ height: `${(h.count / max) * 48}px`, background: "var(--series-1)" }} />
-                    <span className="text-[9px] muted">{h.bin}</span>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-          {res.note && <p className="mt-2 text-[11px] muted">{res.note}</p>}
-        </div>
-      )}
-    </Card>
-  );
-}
-
-function DataPanel({ onChanged }: { onChanged: () => void }) {
-  const input = useRef<HTMLInputElement>(null);
-  const [busy, setBusy] = useState(false);
-  const toast = useToast();
-  const upload = async (f: File) => {
-    setBusy(true);
-    try {
-      const r = await api.importSchedule(f);
-      toast("ok", `Schedule imported (${r.source.toUpperCase()}): ${r.activities_added} added, ${r.activities_updated} updated, ${r.wbs_nodes} WBS nodes`);
-      onChanged();
-    } catch (e) {
-      toast("err", e instanceof Error ? e.message : String(e));
-    } finally {
-      setBusy(false);
-    }
-  };
-  return (
-    <div className="flex flex-wrap gap-2">
-      <button className="btn-secondary btn-sm" onClick={() => input.current?.click()} disabled={busy} title="Import schedule: CSV or MS Project XML (MSPDI)">
-        {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <FileUp className="h-3.5 w-3.5" />} Import schedule
-      </button>
-      <input ref={input} type="file" accept=".csv,.xml" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) void upload(f); e.target.value = ""; }} />
-      <a className="btn-secondary btn-sm" href="/api/export/schedule.xml" download><Download className="h-3.5 w-3.5" /> MSPDI XML</a>
-      <a className="btn-secondary btn-sm" href="/api/export/schedule.csv" download><Download className="h-3.5 w-3.5" /> Schedule CSV</a>
-      <a className="btn-secondary btn-sm" href="/api/export/actuals.csv" download><Download className="h-3.5 w-3.5" /> Actuals dataset</a>
-    </div>
+    </section>
   );
 }

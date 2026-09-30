@@ -108,7 +108,7 @@ def seed(regenerate: bool = True, verbose: bool = True) -> dict:
 def main() -> None:
     import argparse
 
-    ap = argparse.ArgumentParser(description="Seed the SiteSync demo database")
+    ap = argparse.ArgumentParser(description="Seed the KaryaLink demo database")
     ap.add_argument("--keep-data", action="store_true", help="reuse existing synthetic files")
     args = ap.parse_args()
     seed(regenerate=not args.keep_data)

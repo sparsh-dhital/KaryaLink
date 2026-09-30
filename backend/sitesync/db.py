@@ -111,6 +111,7 @@ class ActualEvent(Base):
     model_version: Mapped[str] = mapped_column(String, default="")
     source: Mapped[str] = mapped_column(String, default="live")  # live | historical-seed
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    reverted_by: Mapped[int | None] = mapped_column(Integer, nullable=True)  # id of the "revert" event
 
 
 class Correction(Base):
@@ -218,3 +219,19 @@ def init_db(drop: bool = False) -> None:
     if drop:
         Base.metadata.drop_all(eng)
     Base.metadata.create_all(eng)
+    _add_missing_columns(eng)
+
+
+def _add_missing_columns(eng) -> None:
+    """Tiny forward-only migration: add nullable columns introduced after a DB was created."""
+    from sqlalchemy import inspect, text
+
+    insp = inspect(eng)
+    with eng.begin() as conn:
+        for table in Base.metadata.sorted_tables:
+            if not insp.has_table(table.name):
+                continue
+            have = {c["name"] for c in insp.get_columns(table.name)}
+            for col in table.columns:
+                if col.name not in have and col.nullable:
+                    conn.execute(text(f'ALTER TABLE {table.name} ADD COLUMN "{col.name}" {col.type.compile(eng.dialect)}'))
