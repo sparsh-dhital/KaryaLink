@@ -7,6 +7,7 @@ import { dataBus } from "../lib/demo";
 import { DISC, PHASE, fmtDate } from "../lib/format";
 import { PAGE } from "../lib/layout";
 import type { Meta, Thresholds } from "../types";
+import { apiUrl } from "../lib/config";
 
 export default function Settings({ meta, onMetaChange, dark, toggleDark }: { meta: Meta | null; onMetaChange: () => void; dark: boolean; toggleDark: () => void }) {
   const demo = useDemo();
@@ -133,16 +134,16 @@ function DataCard({ onChanged }: { onChanged: () => void }) {
         <input ref={input} type="file" accept=".csv,.xml" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) void upload(f); e.target.value = ""; }} />
       </div>
       <div className="mt-4 grid gap-2 sm:grid-cols-3">
-        {link("/api/export/schedule.xml", "MS Project XML", "MSPDI with actuals")}
-        {link("/api/export/schedule.csv", "Schedule CSV", "activities + actuals")}
-        {link("/api/export/actuals.csv", "Actuals dataset", "clean structured events")}
+        {link(apiUrl("/api/export/schedule.xml"), "MS Project XML", "MSPDI with actuals")}
+        {link(apiUrl("/api/export/schedule.csv"), "Schedule CSV", "activities + actuals")}
+        {link(apiUrl("/api/export/actuals.csv"), "Actuals dataset", "clean structured events")}
       </div>
       <div className="mt-4">
         <div className="label mb-2">Sample inputs (synthetic)</div>
         <div className="grid gap-2 sm:grid-cols-3">
-          {link("/api/samples/daily_report_EI_civil.txt", "Daily report .txt", "for file upload")}
-          {link("/api/samples/piping_daily_progress.xlsx", "Piping sheet .xlsx", "discipline spreadsheet")}
-          {link("/api/samples/schedule.csv", "Schedule .csv", "the GGS-7 plan")}
+          {link(apiUrl("/api/samples/daily_report_EI_civil.txt"), "Daily report .txt", "for file upload")}
+          {link(apiUrl("/api/samples/piping_daily_progress.xlsx"), "Piping sheet .xlsx", "discipline spreadsheet")}
+          {link(apiUrl("/api/samples/schedule.csv"), "Schedule .csv", "the GGS-7 plan")}
         </div>
       </div>
     </Card>

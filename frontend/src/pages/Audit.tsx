@@ -9,6 +9,7 @@ import { dataBus } from "../lib/demo";
 import { fmtTime, shortHash } from "../lib/format";
 import { PAGE } from "../lib/layout";
 import type { LedgerItem } from "../types";
+import { apiUrl } from "../lib/config";
 
 const PAGE_SIZE = 30;
 const tone = (k: string) =>
@@ -80,7 +81,7 @@ export default function Audit() {
                           <span className="text-2xs muted">{e.actor}{e.report_id ? ` · update #${e.report_id}` : ""}</span></span>
                         {summary && <span className="mt-0.5 block truncate text-xs muted">{summary}</span>}
                       </span>
-                      {photo && <img src={`/api/photos/${photo.id}`} alt="" className="h-9 w-9 shrink-0 rounded-md object-cover" />}
+                      {photo && <img src={apiUrl(`/api/photos/${photo.id}`)} alt="" className="h-9 w-9 shrink-0 rounded-md object-cover" />}
                       <span className="hidden shrink-0 text-right text-2xs muted sm:block"><span className="block num">{fmtTime(e.ts)}</span><span className="font-mono">{e.hash.slice(0, 8)}</span></span>
                     </button>
                   </li>
@@ -128,7 +129,7 @@ function Inspector({ e, embedded }: { e: LedgerItem; embedded?: boolean }) {
       )}
       {photo && (
         <div className="flex items-start gap-3 rounded-xl border p-2.5" style={{ borderColor: "var(--border)", background: "var(--surface-2)" }}>
-          <img src={`/api/photos/${photo.id}`} alt="Photo evidence" className="h-20 w-20 rounded-lg object-cover" />
+          <img src={apiUrl(`/api/photos/${photo.id}`)} alt="Photo evidence" className="h-20 w-20 rounded-lg object-cover" />
           <div className="space-y-0.5 text-xs">
             <p className="font-medium">Photo evidence</p>
             <p className="muted">{fmtTime(photo.taken_at)}</p>

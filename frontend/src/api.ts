@@ -1,3 +1,4 @@
+import { apiUrl } from "./lib/config";
 import type {
   Activity, ActualEventRow, AssistantContext, ChatMsg, ReportStats, DelayFlag, GanttRow, HistoryRow, LedgerItem, Meta, Metrics, Report, Summary, Thresholds, WbsNodeT,
 } from "./types";
@@ -13,7 +14,7 @@ export class ApiError extends Error {
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   let res: Response;
   try {
-    res = await fetch(path, init);
+    res = await fetch(apiUrl(path), init);
   } catch {
     throw new ApiError("Cannot reach the KaryaLink server. Is `npm run dev` running?", 0);
   }
@@ -116,7 +117,7 @@ export const api = {
   demoScript: () => request<{ steps: DemoStep[]; notes: string[] }>("/api/demo/script"),
   demoBatch: (n: number) => request<Record<string, number>>("/api/demo/planner-batch", json({ n })),
   sampleFile: async (name: string): Promise<File> => {
-    const res = await fetch(`/api/samples/${encodeURIComponent(name)}`);
+    const res = await fetch(apiUrl(`/api/samples/${encodeURIComponent(name)}`));
     if (!res.ok) throw new ApiError(`Sample ${name} not available`, res.status);
     const blob = await res.blob();
     return new File([blob], name, { type: blob.type || "text/plain" });

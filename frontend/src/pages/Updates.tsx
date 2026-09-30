@@ -11,6 +11,7 @@ import { dataBus } from "../lib/demo";
 import { DISC, PHASE, fmtDate, fmtTime } from "../lib/format";
 import { PAGE } from "../lib/layout";
 import type { LedgerItem, Meta, Report } from "../types";
+import { apiUrl } from "../lib/config";
 
 type Filter = "all" | "applied" | "awaiting_planner" | "awaiting_supervisor" | "new_activity_created" | "closed";
 const PAGE_SIZE = 30;
@@ -168,7 +169,7 @@ export function ReportDetail({ id, threshold, embedded, onClose }: { id: number;
         <div className="mt-2 flex flex-wrap gap-1">
           {Object.entries(EVIDENCE_LEGEND).filter(([k]) => used.has(k)).map(([k, l]) => <mark key={k} className={clsx("ev text-[10.5px]", `ev-${k}`)}>{l}</mark>)}
         </div>
-        {r.photo_id && <img src={`/api/photos/${r.photo_id}`} alt="Photo evidence" className="mt-3 max-h-44 rounded-xl border object-cover" style={{ borderColor: "var(--border)" }} />}
+        {r.photo_id && <img src={apiUrl(`/api/photos/${r.photo_id}`)} alt="Photo evidence" className="mt-3 max-h-44 rounded-xl border object-cover" style={{ borderColor: "var(--border)" }} />}
       </div>
 
       <dl className="grid grid-cols-2 gap-x-4 gap-y-2 text-xs">

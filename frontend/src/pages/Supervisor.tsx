@@ -11,6 +11,7 @@ import { dataBus, demoRegistry, sleep } from "../lib/demo";
 import { DISC, fmtDate, fmtTime } from "../lib/format";
 import { listen, micLevel, onSpeakingChange, recognitionSupported, speak, stopSpeaking, synthesisSupported } from "../lib/speech";
 import type { AssistantContext, ChatItem, ChatMsg, Suggestion } from "../types";
+import { apiUrl } from "../lib/config";
 
 export const PERSONAS: Record<string, { name: string; discipline: string }> = {
   piping: { name: "Anil Borah", discipline: "PIP" },
@@ -370,7 +371,7 @@ export default function Supervisor() {
             )}
             {photo && (
               <div className="mb-2 flex items-center gap-2.5 rounded-xl border p-1.5 pr-2 text-xs" style={{ background: "var(--surface)", borderColor: "var(--border)" }}>
-                <img src={photo.url} alt="Attached evidence" className="h-10 w-10 rounded-lg object-cover" />
+                <img src={apiUrl(photo.url)} alt="Attached evidence" className="h-10 w-10 rounded-lg object-cover" />
                 <span className="flex-1">{hi ? "Photo evidence judi" : "Photo evidence attached"} · {photo.lat !== null
                   ? <span className="text-emerald-600 dark:text-emerald-400"><MapPin className="inline h-3 w-3" /> GPS</span> : <span className="muted">no GPS</span>}</span>
                 <button className="btn-ghost btn-xs btn-icon" onClick={() => setPhoto(null)} aria-label="Remove photo"><X className="h-3.5 w-3.5" /></button>
@@ -568,7 +569,7 @@ function Bubble({ m, active, onOption, demoTap, onInsert }: {
         <div className="max-w-[85%]">
           <div className="rounded-2xl rounded-br-md bg-brand-600 px-4 py-2.5 text-sm leading-6 text-white shadow-xs">
             <p className="whitespace-pre-wrap break-words">{m.text}</p>
-            {p.photo_id ? <img src={`/api/photos/${p.photo_id}`} alt="Evidence" className="mt-2 max-h-44 rounded-lg object-cover" /> : null}
+            {p.photo_id ? <img src={apiUrl(`/api/photos/${p.photo_id}`)} alt="Evidence" className="mt-2 max-h-44 rounded-lg object-cover" /> : null}
           </div>
           <div className="mt-1 flex items-center justify-end gap-1.5 pr-1 text-2xs subtle">
             {p.channel === "voice" && <><Mic className="h-3 w-3" /> voice ·</>}

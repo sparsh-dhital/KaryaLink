@@ -1,0 +1,21 @@
+# Render Blueprint: New + > Blueprint > pick this repo. Deploys the KaryaLink API.
+services:
+  - type: web
+    name: karyalink-api
+    runtime: python
+    plan: free
+    region: singapore          # closest Render region to India
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt && python -m sitesync.services.seeding
+    startCommand: uvicorn sitesync.api:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /api/health
+    autoDeploy: true
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.13.4
+      - key: PYTHONUNBUFFERED
+        value: "1"
+      - key: CORS_ORIGINS        # comma-separated; set to your Vercel URL after the first deploy
+        value: https://karya-link.vercel.app
+      - key: ANTHROPIC_API_KEY   # optional: enables evidence-checked LLM extraction
+        sync: false

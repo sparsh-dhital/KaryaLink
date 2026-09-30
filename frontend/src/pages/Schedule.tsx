@@ -9,6 +9,7 @@ import { dataBus } from "../lib/demo";
 import { DISC, DISC_COLOR, DISC_ORDER, PHASE, fmtDate } from "../lib/format";
 import { PAGE } from "../lib/layout";
 import type { Activity, ActualEventRow, Meta, WbsNodeT } from "../types";
+import { apiUrl } from "../lib/config";
 
 type View = "timeline" | "wbs" | "delays" | "warnings";
 
@@ -36,8 +37,8 @@ export default function Schedule({ meta }: { meta: Meta | null }) {
       <PageHeader eyebrow="Overview" title="Schedule intelligence"
         description="The L1-L6 schedule with actuals from linked site updates: planned vs actual timeline, WBS roll-up by rules of credit, early delay flags and sequence exceptions."
         actions={<>
-          <a className="btn-secondary btn-sm" href="/api/export/schedule.xml" download><Download className="h-3.5 w-3.5" /> MS Project XML</a>
-          <a className="btn-secondary btn-sm" href="/api/export/schedule.csv" download><Download className="h-3.5 w-3.5" /> CSV</a>
+          <a className="btn-secondary btn-sm" href={apiUrl("/api/export/schedule.xml")} download><Download className="h-3.5 w-3.5" /> MS Project XML</a>
+          <a className="btn-secondary btn-sm" href={apiUrl("/api/export/schedule.csv")} download><Download className="h-3.5 w-3.5" /> CSV</a>
         </>} />
 
       <div className="mb-4 flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">

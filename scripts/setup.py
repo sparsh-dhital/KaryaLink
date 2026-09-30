@@ -27,7 +27,7 @@ def main() -> None:
         venv.EnvBuilder(with_pip=True).create(VENV)
     py = str(venv_python())
     subprocess.check_call([py, "-m", "pip", "install", "--upgrade", "pip", "-q"])
-    subprocess.check_call([py, "-m", "pip", "install", "-q", "-r", str(ROOT / "backend" / "requirements.txt")])
+    subprocess.check_call([py, "-m", "pip", "install", "-q", "-r", str(ROOT / "backend" / "requirements-dev.txt")])
     print("[setup] backend dependencies installed. Next: npm run seed && npm run dev")
 
 

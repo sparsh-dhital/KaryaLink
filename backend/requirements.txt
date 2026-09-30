@@ -8,6 +8,5 @@ numpy>=1.26
 pandas>=2.1
 openpyxl>=3.1
 python-multipart>=0.0.9
-httpx>=0.26
-pytest>=8.0
+# optional: only used when ANTHROPIC_API_KEY is set
 anthropic>=0.40

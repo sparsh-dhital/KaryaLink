@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import logging
+import os
 import threading
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
@@ -54,7 +55,10 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="KaryaLink API", description="Site-to-Schedule Intelligence", version=__version__, lifespan=lifespan)
-app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+# CORS_ORIGINS="https://a.vercel.app,https://b.com" restricts browser access; unset = any origin (local dev).
+_origins = [o.strip().rstrip("/") for o in os.environ.get("CORS_ORIGINS", "*").split(",") if o.strip()]
+app.add_middleware(CORSMiddleware, allow_origins=_origins or ["*"], allow_origin_regex=r"https://.*\.vercel\.app" if "*" not in _origins else None,
+                   allow_methods=["*"], allow_headers=["*"], expose_headers=["Content-Disposition"])
 RESETTING = threading.Event()
 _ACTIVE = 0
 _ACTIVE_COND = threading.Condition()

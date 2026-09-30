@@ -21,7 +21,7 @@ Confident links are applied automatically. Uncertain ones become one clarifying 
 
 ## How to run
 
-**Requirements:** Node 18+ (tested on 22), Python 3.10+ (tested on 3.13). Nothing else, and no API keys.
+**Requirements:** Node 18+ (tested on 22), Python 3.10+ (tested on 3.13). Nothing else, and no API keys. `backend/requirements.txt` holds runtime dependencies (used by Render); `requirements-dev.txt` adds pytest.
 
 ```bash
 npm install        # installs root + frontend deps, then creates .venv and pip-installs the backend
@@ -41,6 +41,31 @@ Then open **http://127.0.0.1:5173**, click **Start scenario** on the Demo Day ca
 | `npm run screenshots` | Captures the 9 screenshots above with Playwright. It uses the bundled Chromium, or falls back to the installed Edge or Chrome. Needs `npm run dev` running. |
 
 **Optional LLM assist:** set `ANTHROPIC_API_KEY` (and optionally `SITESYNC_LLM_MODEL`, default `claude-opus-5-5`). The extractor then asks the model for strict-JSON fields, each with a quoted evidence span. **Any field whose evidence is not literally present in the source text is rejected.** LLM fields only fill gaps left by the rules and never override them. Any error falls back to the offline path. The benchmark always runs offline so the numbers are reproducible.
+
+---
+
+## Deploy: backend on Render, frontend on Vercel
+
+The frontend is a static single-page app; the backend is a FastAPI service. They deploy separately and talk over HTTPS.
+
+**1. Backend on Render**
+1. Push this repo to GitHub.
+2. Render dashboard → **New → Blueprint** → select the repo. Render reads [`render.yaml`](render.yaml) (service `karyalink-api`, root `backend`, Python 3.13.4).
+3. The build installs `backend/requirements.txt` and runs the seed (`python -m sitesync.services.seeding`), so the demo database is baked into the deploy. Start command: `uvicorn sitesync.api:app --host 0.0.0.0 --port $PORT`.
+4. When it is live, open `https://<your-service>.onrender.com/api/health`; it should return `{"ok": true, ...}`.
+
+**2. Frontend on Vercel**
+1. **Add New → Project** → import the repo, and set **Root Directory = `frontend`** (Vercel then detects Vite; [`frontend/vercel.json`](frontend/vercel.json) adds the SPA rewrite).
+2. Under **Settings → Environment Variables** add `VITE_API_URL` = your Render URL, with no trailing slash (for example `https://karyalink-api.onrender.com`), for Production and Preview.
+3. **Redeploy** (Vite bakes the variable in at build time, so changing it always needs a new build).
+
+**3. Connect them:** on Render set `CORS_ORIGINS` to your Vercel URL (default in `render.yaml`: `https://karya-link.vercel.app`). Vercel preview URLs (`*.vercel.app`) are always allowed.
+
+Notes:
+- **Why `/planner` used to 404 on Vercel:** it serves static files only, so any deep link or refresh on a client-side route needed a rewrite to `index.html`. That is what `vercel.json` provides.
+- **Free-tier behaviour:** Render's free plan sleeps after ~15 min idle (the first request then takes ~30-60 s) and its disk is ephemeral, so anything created in the app resets to the seeded demo state on restart. That suits a demo; use a paid plan with a persistent disk for real use.
+- **Voice** works on the deployed site because Vercel serves HTTPS (browsers require a secure context for the microphone).
+- Optional: set `ANTHROPIC_API_KEY` on Render to enable evidence-checked LLM extraction; without it everything runs offline.
 
 ---
 
