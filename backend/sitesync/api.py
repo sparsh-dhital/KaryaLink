@@ -70,7 +70,8 @@ async def hold_during_reset(request: Request, call_next):
     for in-flight calls to finish first (so no request ever sees half-built tables)."""
     global _ACTIVE
     path = request.url.path
-    if not path.startswith("/api/") or path == "/api/demo/reset":
+    # /api/health must answer during a reset, or the host's health check fails and restarts the server.
+    if not path.startswith("/api/") or path in ("/api/demo/reset", "/api/health"):
         return await call_next(request)
     for _ in range(900):  # up to 90 s
         with _ACTIVE_COND:
